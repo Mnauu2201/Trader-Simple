@@ -5,6 +5,7 @@ import { useKlineData } from '../hooks/useKlineData'
 import DrawingToolbar from './DrawingToolbar'
 import { useDrawingTools } from '../hooks/useDrawingTools'
 import { useOIHistory } from '../hooks/useOIHistory'
+import { useTakerVolume } from '../hooks/useTakerVolume'
 
 // ── Interval groups ──────────────────────────────────────────────────────────
 const INTERVAL_GROUPS = [
@@ -450,6 +451,15 @@ export default function ChartPanel() {
   const loadMoreOIRef      = useRef(null)   // fn được gán sau khi hook mount
   const isLoadingOIMoreRef = useRef(false)  // guard spinner
 
+  // ── Taker Buy/Sell Volume refs ──────────────────────────────────────────────
+  const tvContainerRef     = useRef(null)
+  const tvChartRef         = useRef(null)
+  const tvBuySeriesRef     = useRef(null)
+  const tvSellSeriesRef    = useRef(null)
+  const loadMoreTVRef      = useRef(null)
+  const isLoadingTVMoreRef = useRef(false)
+  const tvDataRef          = useRef([])
+
   const klineDataRef = useRef([])
   const rsiStateRef = useRef(null)
   const macdStateRef = useRef(null)
@@ -488,10 +498,12 @@ export default function ChartPanel() {
     showMACD, setShowMACD,
     showBB, setShowBB,
     showOI, setShowOI,
+    showTakerVol, setShowTakerVol,
   } = useChartStore()
 
   // ── OI History data ───────────────────────────────────────────────────────
   const { oiData, loadMoreOI, hasMoreOI } = useOIHistory(symbol, interval, market)
+  const { tvData, loadMoreTV, hasMoreTV } = useTakerVolume(symbol, interval, market)
 
   // ── Drawing tools hook ────────────────────────────────────────────────────
   const {
@@ -916,6 +928,10 @@ export default function ChartPanel() {
   useEffect(() => { oiDataRef.current = oiData }, [oiData])
   useEffect(() => { loadMoreOIRef.current = loadMoreOI }, [loadMoreOI])
 
+  // ── Sync TV refs ──────────────────────────────────────────────────────────
+  useEffect(() => { tvDataRef.current = tvData }, [tvData])
+  useEffect(() => { loadMoreTVRef.current = loadMoreTV }, [loadMoreTV])
+
   // ── Set OI data khi oiData thay đổi ──────────────────────────────────────
   // FIX: Nếu series chưa ready (chart init chưa xong), retry sau 200ms
   useEffect(() => {
@@ -936,6 +952,140 @@ export default function ChartPanel() {
       return () => clearTimeout(t)
     }
   }, [oiData])
+
+  // ── Taker Volume Chart — init/destroy khi showTakerVol / market thay đổi ──
+  useEffect(() => {
+    if (!showTakerVol || market !== 'futures') {
+      if (tvChartRef.current) {
+        tvChartRef.current.remove()
+        tvChartRef.current   = null
+        tvBuySeriesRef.current  = null
+        tvSellSeriesRef.current = null
+      }
+      return
+    }
+
+    let cancelled = false
+    const timerId = setTimeout(() => {
+      if (cancelled || !tvContainerRef.current || tvChartRef.current) return
+
+      const chart = createChart(tvContainerRef.current, {
+        autoSize: true,
+        layout: {
+          background: { color: '#0b0e11' },
+          textColor: '#848e9c',
+          fontFamily: 'Inter, system-ui, sans-serif',
+          attributionLogo: false,
+          fontSize: 10,
+        },
+        grid: {
+          vertLines: { color: '#1a1d26', style: 1 },
+          horzLines: { color: '#1a1d26', style: 1 },
+        },
+        crosshair: {
+          mode: 1,
+          vertLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139' },
+          horzLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139', labelVisible: true },
+        },
+        rightPriceScale: {
+          borderColor: '#1a1d26',
+          textColor: '#848e9c',
+          scaleMargins: { top: 0.05, bottom: 0.05 },
+        },
+        timeScale: { visible: false },
+        handleScroll: false,
+        handleScale: false,
+      })
+
+      // Buy taker = xanh, Sell taker = đỏ — dùng HistogramSeries riêng nhau
+      const buySeries = chart.addSeries(HistogramSeries, {
+        color: '#0ecb8188',
+        priceFormat: { type: 'volume' },
+        priceScaleId: 'tv',
+        lastValueVisible: false,
+      })
+      const sellSeries = chart.addSeries(HistogramSeries, {
+        color: '#f6465d88',
+        priceFormat: { type: 'volume' },
+        priceScaleId: 'tv',
+        lastValueVisible: false,
+      })
+      chart.priceScale('tv').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.05 } })
+
+      tvChartRef.current      = chart
+      tvBuySeriesRef.current  = buySeries
+      tvSellSeriesRef.current = sellSeries
+
+      // Set data ngay nếu đã có sẵn
+      if (tvDataRef.current && tvDataRef.current.length > 0) {
+        const sorted = [...tvDataRef.current].sort((a, b) => a.time - b.time)
+        buySeries.setData(sorted.map(d => ({ time: d.time, value: d.buyVol, color: '#0ecb8188' })))
+        sellSeries.setData(sorted.map(d => ({ time: d.time, value: -d.sellVol, color: '#f6465d88' })))
+        try {
+          const mainRange = mainChartRef.current?.timeScale().getVisibleRange()
+          if (mainRange) chart.timeScale().setVisibleRange(mainRange)
+        } catch (_) {}
+      }
+
+      // Sync timescale + infinite scroll
+      if (mainChartRef.current) {
+        let tvSyncRaf = null
+        mainChartRef.current.timeScale().subscribeVisibleTimeRangeChange(range => {
+          if (!range || !tvChartRef.current) return
+          if (tvSyncRaf) cancelAnimationFrame(tvSyncRaf)
+          tvSyncRaf = requestAnimationFrame(() => {
+            try { tvChartRef.current?.timeScale().setVisibleRange(range) } catch (_) {}
+            tvSyncRaf = null
+          })
+        })
+
+        mainChartRef.current.timeScale().subscribeVisibleLogicalRangeChange(range => {
+          if (!range || !tvChartRef.current) return
+          try {
+            const tvRange = tvChartRef.current.timeScale().getVisibleLogicalRange()
+            if (!tvRange) return
+            if (tvRange.from < 10 && !isLoadingTVMoreRef.current) {
+              isLoadingTVMoreRef.current = true
+              loadMoreTVRef.current?.().finally(() => {
+                isLoadingTVMoreRef.current = false
+              })
+            }
+          } catch (_) {}
+        })
+      }
+    }, 0)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timerId)
+      if (tvChartRef.current) {
+        tvChartRef.current.remove()
+        tvChartRef.current      = null
+        tvBuySeriesRef.current  = null
+        tvSellSeriesRef.current = null
+      }
+    }
+  }, [showTakerVol, market])
+
+  // ── Set TV data khi tvData thay đổi ──────────────────────────────────────
+  useEffect(() => {
+    if (!tvData.length) return
+    const applyTV = () => {
+      if (!tvBuySeriesRef.current || !tvSellSeriesRef.current || !tvChartRef.current) return false
+      const sorted = [...tvData].sort((a, b) => a.time - b.time)
+      tvBuySeriesRef.current.setData(sorted.map(d => ({ time: d.time, value: d.buyVol,  color: '#0ecb8188' })))
+      tvSellSeriesRef.current.setData(sorted.map(d => ({ time: d.time, value: -d.sellVol, color: '#f6465d88' })))
+      try {
+        const mainRange = mainChartRef.current?.timeScale().getVisibleRange()
+        if (mainRange) tvChartRef.current.timeScale().setVisibleRange(mainRange)
+      } catch (_) {}
+      return true
+    }
+    if (!applyTV()) {
+      const t = setTimeout(applyTV, 200)
+      return () => clearTimeout(t)
+    }
+  }, [tvData])
 
   // ── Toggle MA ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1313,6 +1463,13 @@ export default function ChartPanel() {
                 OI
               </button>
             )}
+            {market === 'futures' && (
+              <button onClick={() => setShowTakerVol(!showTakerVol)}
+                className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showTakerVol ? 'bg-[#26a69a1a] text-[#26a69a] border-[#26a69a44] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+                  }`}>
+                TVol
+              </button>
+            )}
           </div>
 
           <div className="ml-auto flex items-center gap-2">
@@ -1520,6 +1677,43 @@ export default function ChartPanel() {
             </div>
             <div
               ref={oiContainerRef}
+              className="w-full"
+              style={{ height: 'calc(100% - 20px)', cursor: isDragging ? 'grabbing' : 'crosshair' }}
+              onMouseDown={() => setIsDragging(true)}
+              onMouseUp={() => setIsDragging(false)}
+              onMouseLeave={() => setIsDragging(false)}
+            />
+          </div>
+        )}
+
+        {/* ── Taker Buy/Sell Volume panel (Futures only) ── */}
+        {showTakerVol && market === 'futures' && (
+          <div className="flex-shrink-0 border-t border-[#1a1d26] overflow-hidden transition-all duration-200"
+            style={{ height: 100, minHeight: 100 }}>
+            <div className="flex items-center gap-2 px-3 py-0.5 bg-[#0b0e11]">
+              <span className="text-[9px] text-[#26a69a] font-medium">Taker Volume</span>
+              {tvData.length > 0 && (() => {
+                const last = tvData[tvData.length - 1]
+                const total = last.buyVol + last.sellVol
+                const buyPct = total > 0 ? (last.buyVol / total * 100) : 50
+                return (
+                  <>
+                    <span className="text-[9px] text-[#0ecb81]">B {fmtVol(last.buyVol)}</span>
+                    <span className="text-[9px] text-[#f6465d]">S {fmtVol(last.sellVol)}</span>
+                    <span className={`text-[9px] font-medium ${buyPct >= 50 ? 'text-[#0ecb81]' : 'text-[#f6465d]'}`}>
+                      {buyPct.toFixed(1)}% Buy
+                    </span>
+                  </>
+                )
+              })()}
+              {tvData.length > 0 && (
+                <span className="text-[9px] text-[#5e6673]">
+                  {tvData.length} điểm{hasMoreTV ? ' · cuộn trái để xem thêm' : ' · đã hết'}
+                </span>
+              )}
+            </div>
+            <div
+              ref={tvContainerRef}
               className="w-full"
               style={{ height: 'calc(100% - 20px)', cursor: isDragging ? 'grabbing' : 'crosshair' }}
               onMouseDown={() => setIsDragging(true)}

@@ -140,3 +140,16 @@ export async function getTopLongShortPositionRatio(symbol, period = '5m', limit 
     `/futures/data/topLongShortPositionRatio?symbol=${symbol}&period=${period}&limit=${limit}`
   )
 }
+
+// Taker Buy/Sell Volume — v17
+export async function getTakerBuySellVol(symbol, period, limit = 500, endTime = null) {
+  const isDev = import.meta.env.DEV
+  // Endpoint đúng: /futures/data/takerlongshortRatio (Binance docs)
+  let url = isDev
+    ? `/futures-data/futures/data/takerlongshortRatio?symbol=${symbol}&period=${period}&limit=${limit}`
+    : `https://fapi.binance.com/futures/data/takerlongshortRatio?symbol=${symbol}&period=${period}&limit=${limit}`
+  if (endTime) url += `&endTime=${endTime}`
+  const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
