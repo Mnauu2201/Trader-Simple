@@ -111,6 +111,7 @@ export function useKlineData(
             low: parseFloat(k.l),
             close: parseFloat(k.c),
             volume: parseFloat(k.v),
+            takerBuyVol: parseFloat(k.V ?? 0),  // V: taker buy base asset volume
           }
           if (!dataReady) {
             wsBuffer.push(candle)

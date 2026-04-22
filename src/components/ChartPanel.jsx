@@ -225,6 +225,19 @@ function fmtOI(val) {
   return val.toFixed(0)
 }
 
+// ── CVD: Cumulative Volume Delta ─────────────────────────────────────────────
+// cvd[i] = cvd[i-1] + takerBuyVol[i] - (totalVol[i] - takerBuyVol[i])
+//         = cvd[i-1] + 2*takerBuyVol[i] - totalVol[i]
+function calcCVDFull(data) {
+  let cvd = 0
+  return data.map(d => {
+    const buyVol  = d.takerBuyVol ?? 0
+    const sellVol = (d.volume ?? 0) - buyVol
+    cvd += buyVol - sellVol
+    return { time: d.time, value: cvd }
+  })
+}
+
 function getPriceFormat(price) {
   if (!price || !isFinite(price) || price <= 0) {
     return { type: 'price', precision: 8, minMove: 0.00000001 }
@@ -460,6 +473,12 @@ export default function ChartPanel() {
   const isLoadingTVMoreRef = useRef(false)
   const tvDataRef          = useRef([])
 
+  // ── CVD refs ───────────────────────────────────────────────────────────────
+  const cvdContainerRef  = useRef(null)
+  const cvdChartRef      = useRef(null)
+  const cvdSeriesRef     = useRef(null)
+  const cvdStateRef      = useRef(null)  // { lastCVD } — O(1) per tick
+
   const klineDataRef = useRef([])
   const rsiStateRef = useRef(null)
   const macdStateRef = useRef(null)
@@ -499,6 +518,7 @@ export default function ChartPanel() {
     showBB, setShowBB,
     showOI, setShowOI,
     showTakerVol, setShowTakerVol,
+    showCVD, setShowCVD,
   } = useChartStore()
 
   // ── OI History data ───────────────────────────────────────────────────────
@@ -1087,6 +1107,106 @@ export default function ChartPanel() {
     }
   }, [tvData])
 
+  // ── CVD Chart — init/destroy khi showCVD thay đổi ─────────────────────────
+  useEffect(() => {
+    if (!showCVD) {
+      if (cvdChartRef.current) {
+        cvdChartRef.current.remove()
+        cvdChartRef.current = null
+        cvdSeriesRef.current = null
+      }
+      return
+    }
+
+    let cancelled = false
+    const timerId = setTimeout(() => {
+      if (cancelled || !cvdContainerRef.current || cvdChartRef.current) return
+
+      const chart = createChart(cvdContainerRef.current, {
+        autoSize: true,
+        layout: {
+          background: { color: '#0b0e11' },
+          textColor: '#848e9c',
+          fontFamily: 'Inter, system-ui, sans-serif',
+          attributionLogo: false,
+          fontSize: 10,
+        },
+        grid: {
+          vertLines: { color: '#1a1d26', style: 1 },
+          horzLines: { color: '#1a1d26', style: 1 },
+        },
+        crosshair: {
+          mode: 1,
+          vertLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139' },
+          horzLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139', labelVisible: true },
+        },
+        rightPriceScale: {
+          borderColor: '#1a1d26',
+          textColor: '#848e9c',
+          scaleMargins: { top: 0.1, bottom: 0.1 },
+        },
+        timeScale: { visible: false },
+        handleScroll: false,
+        handleScale: false,
+      })
+
+      const series = chart.addSeries(AreaSeries, {
+        lineColor: '#e91e63',
+        topColor: 'rgba(233,30,99,0.2)',
+        bottomColor: 'rgba(233,30,99,0.02)',
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        crosshairMarkerVisible: true,
+        priceFormat: {
+          type: 'custom',
+          formatter: (v) => (v >= 0 ? '+' : '') + fmtVol(v),
+          minMove: 0.01,
+        },
+      })
+
+      // Zero line
+      series.createPriceLine({ price: 0, color: '#4c525e55', lineWidth: 1, lineStyle: 1, axisLabelVisible: false })
+
+      cvdChartRef.current = chart
+      cvdSeriesRef.current = series
+
+      // Set data ngay nếu kline data đã có
+      if (klineDataRef.current.length > 0) {
+        const cvdData = calcCVDFull(klineDataRef.current)
+        series.setData(cvdData)
+        cvdStateRef.current = { lastCVD: cvdData[cvdData.length - 1]?.value ?? 0 }
+        try {
+          const mainRange = mainChartRef.current?.timeScale().getVisibleRange()
+          if (mainRange) chart.timeScale().setVisibleRange(mainRange)
+        } catch (_) {}
+      }
+
+      // Sync timescale với main chart
+      if (mainChartRef.current) {
+        let cvdSyncRaf = null
+        mainChartRef.current.timeScale().subscribeVisibleTimeRangeChange(range => {
+          if (!range || !cvdChartRef.current) return
+          if (cvdSyncRaf) cancelAnimationFrame(cvdSyncRaf)
+          cvdSyncRaf = requestAnimationFrame(() => {
+            try { cvdChartRef.current?.timeScale().setVisibleRange(range) } catch (_) {}
+            cvdSyncRaf = null
+          })
+        })
+      }
+    }, 0)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timerId)
+      if (cvdChartRef.current) {
+        cvdChartRef.current.remove()
+        cvdChartRef.current = null
+        cvdSeriesRef.current = null
+      }
+    }
+  }, [showCVD])
+
   // ── Toggle MA ──────────────────────────────────────────────────────────────
   useEffect(() => {
     MA_CONFIGS.forEach(cfg => maRefs.current[cfg.period]?.applyOptions({ visible: showMA[cfg.period] }))
@@ -1222,6 +1342,13 @@ export default function ChartPanel() {
       macdHistRef.current?.setData(histogram)
       macdStateRef.current = macdState
     }
+
+    // CVD — tính từ kline data (takerBuyVol)
+    if (cvdSeriesRef.current) {
+      const cvdData = calcCVDFull(data)
+      cvdSeriesRef.current.setData(cvdData)
+      cvdStateRef.current = { lastCVD: cvdData[cvdData.length - 1]?.value ?? 0 }
+    }
   }, [])
 
   // ── onUpdate: O(1) per tick ───────────────────────────────────────────────
@@ -1288,6 +1415,17 @@ export default function ChartPanel() {
         macdStateRef.current = { ...ms, lastEmaFast: newFast, lastEmaSlow: newSlow, lastSignal: newSignal }
       }
     }
+
+    // CVD — O(1) per tick
+    if (cvdSeriesRef.current && cvdStateRef.current) {
+      const buyVol  = candle.takerBuyVol ?? 0
+      const sellVol = (candle.volume ?? 0) - buyVol
+      const delta   = buyVol - sellVol
+      const newCVD  = cvdStateRef.current.lastCVD + delta
+      cvdSeriesRef.current.update({ time: candle.time, value: newCVD })
+      if (isNew) cvdStateRef.current = { lastCVD: newCVD }
+    }
+
     // Auto scroll to latest khi nến MỚI xuất hiện (không phải cập nhật nến hiện tại)
     if (isNew && mainChartRef.current) {
       try {
@@ -1349,6 +1487,13 @@ export default function ChartPanel() {
       macdSignalRef.current?.setData(signalLine)
       macdHistRef.current?.setData(histogram)
       macdStateRef.current = macdState
+    }
+
+    // CVD recalc sau khi prepend
+    if (cvdSeriesRef.current) {
+      const cvdData = calcCVDFull(merged)
+      cvdSeriesRef.current.setData(cvdData)
+      cvdStateRef.current = { lastCVD: cvdData[cvdData.length - 1]?.value ?? 0 }
     }
   }, [])
 
@@ -1470,6 +1615,12 @@ export default function ChartPanel() {
                 TVol
               </button>
             )}
+
+            <button onClick={() => setShowCVD(!showCVD)}
+              className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showCVD ? 'bg-[#e91e631a] text-[#e91e63] border-[#e91e6344] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+                }`}>
+              CVD
+            </button>
           </div>
 
           <div className="ml-auto flex items-center gap-2">
@@ -1714,6 +1865,30 @@ export default function ChartPanel() {
             </div>
             <div
               ref={tvContainerRef}
+              className="w-full"
+              style={{ height: 'calc(100% - 20px)', cursor: isDragging ? 'grabbing' : 'crosshair' }}
+              onMouseDown={() => setIsDragging(true)}
+              onMouseUp={() => setIsDragging(false)}
+              onMouseLeave={() => setIsDragging(false)}
+            />
+          </div>
+        )}
+
+        {/* ── CVD — Cumulative Volume Delta panel ── */}
+        {showCVD && (
+          <div className="flex-shrink-0 border-t border-[#1a1d26] overflow-hidden transition-all duration-200"
+            style={{ height: 90, minHeight: 90 }}>
+            <div className="flex items-center gap-2 px-3 py-0.5 bg-[#0b0e11]">
+              <span className="text-[9px] text-[#e91e63] font-medium">CVD</span>
+              {cvdStateRef.current != null && (
+                <span className={`text-[9px] font-medium ${cvdStateRef.current.lastCVD >= 0 ? 'text-[#0ecb81]' : 'text-[#f6465d]'}`}>
+                  {cvdStateRef.current.lastCVD >= 0 ? '+' : ''}{fmtVol(cvdStateRef.current.lastCVD)}
+                </span>
+              )}
+              <span className="text-[9px] text-[#5e6673]">Buy−Sell taker tích lũy</span>
+            </div>
+            <div
+              ref={cvdContainerRef}
               className="w-full"
               style={{ height: 'calc(100% - 20px)', cursor: isDragging ? 'grabbing' : 'crosshair' }}
               onMouseDown={() => setIsDragging(true)}

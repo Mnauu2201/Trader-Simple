@@ -65,6 +65,7 @@ export async function getKlines(symbol, interval, limit = 500, market = 'spot', 
     low: parseFloat(c[3]),
     close: parseFloat(c[4]),
     volume: parseFloat(c[5]),
+    takerBuyVol: parseFloat(c[9] ?? 0),  // index 9: taker buy base asset volume
   }))
 }
 
@@ -144,10 +145,9 @@ export async function getTopLongShortPositionRatio(symbol, period = '5m', limit 
 // Taker Buy/Sell Volume — v17
 export async function getTakerBuySellVol(symbol, period, limit = 500, endTime = null) {
   const isDev = import.meta.env.DEV
-  // Endpoint đúng: /futures/data/takerlongshortRatio (Binance docs)
   let url = isDev
-    ? `/futures-data/futures/data/takerlongshortRatio?symbol=${symbol}&period=${period}&limit=${limit}`
-    : `https://fapi.binance.com/futures/data/takerlongshortRatio?symbol=${symbol}&period=${period}&limit=${limit}`
+    ? `/futures-data/futures/data/takerbuysellevol?symbol=${symbol}&period=${period}&limit=${limit}`
+    : `https://fapi.binance.com/futures/data/takerbuysellevol?symbol=${symbol}&period=${period}&limit=${limit}`
   if (endTime) url += `&endTime=${endTime}`
   const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
