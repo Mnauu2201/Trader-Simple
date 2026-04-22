@@ -16,6 +16,7 @@ export const useChartStore = create(
       showVolume: true,
       showMACD: false,
       showBB: false,
+      showOI: false,
 
       // Alert sound settings
       alertVolume: 0.4,          // 0.0 – 1.0
@@ -30,6 +31,7 @@ export const useChartStore = create(
       setShowVolume: (v) => set({ showVolume: v }),
       setShowMACD: (v) => set({ showMACD: v }),
       setShowBB: (v) => set({ showBB: v }),
+      setShowOI:  (v) => set({ showOI: v }),
       setAlertVolume: (v) => set({ alertVolume: v }),
       setAlertTone: (v) => set({ alertTone: v }),
     }),
@@ -45,6 +47,7 @@ export const useChartStore = create(
         showVolume: state.showVolume,
         showMACD: state.showMACD,
         showBB: state.showBB,
+        showOI: state.showOI,
         alertVolume: state.alertVolume,
         alertTone: state.alertTone,
       }),
