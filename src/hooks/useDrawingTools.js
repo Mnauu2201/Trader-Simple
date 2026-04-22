@@ -1275,6 +1275,7 @@ export function useDrawingTools({
     keepDrawing = false,
     magnetMode = 'none',
     ohlcData,       // optional: [{x, open, high, low, close}] for magnet snap
+    onPan,          // optional: ({dx, dy}) => void — called while dragging to pan chart
 }) {
     const [drawings, setDrawings] = useState([])
     const [hiddenAll, setHiddenAll] = useState(false)
@@ -1295,6 +1296,7 @@ export function useDrawingTools({
     const ohlcRef = useRef(ohlcData)
     const cursorRef = useRef(null)          // {x, y} vị trí chuột hiện tại
     const pixelToTimeRef = useRef(pixelToTime)   // (x) => Date|null
+    const panRef = useRef(null)             // {startX, startY} drag-to-pan state
     useEffect(() => { activeToolRef.current = activeTool }, [activeTool])
     useEffect(() => { drawingColorRef.current = drawingColor }, [drawingColor])
     useEffect(() => { lineWidthRef.current = lineWidth }, [lineWidth])
@@ -1442,49 +1444,54 @@ export function useDrawingTools({
         const cur = cursorRef.current
         if (cur) {
             const { x, y } = cur
-            const W2 = canvas.width, H2 = canvas.height
 
             if (curTool === 'cross') {
-                // Full crosshair lines + price/time labels
-                drawInProgressCrosshair(ctx, x, y, '#9598a1')
+                // Native CSS crosshair handles the cursor (+), nothing to draw on canvas
+
             } else if (curTool === 'dot_cursor') {
-                // Dot in center + short tick lines
+                // Plain filled dot — no border, no ticks
                 ctx.save()
-                ctx.strokeStyle = '#9598a1'
-                ctx.lineWidth = 1
                 ctx.setLineDash([])
-                // Short ticks
-                const T = 5
                 ctx.beginPath()
-                ctx.moveTo(x, y - T - 4); ctx.lineTo(x, y - T)
-                ctx.moveTo(x, y + T); ctx.lineTo(x, y + T + 4)
-                ctx.moveTo(x - T - 4, y); ctx.lineTo(x - T, y)
-                ctx.moveTo(x + T, y); ctx.lineTo(x + T + 4, y)
-                ctx.stroke()
-                // Dot
-                ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2)
-                ctx.fillStyle = '#9598a1'; ctx.fill()
+                ctx.arc(x, y, 3.5, 0, Math.PI * 2)
+                ctx.fillStyle = '#9598a1'
+                ctx.fill()
                 ctx.restore()
+
             } else if (curTool === 'demo_cursor') {
-                // Magnifier circle with crosshair ticks
+                // Native arrow cursor + pulsing red circle like TradingView
                 ctx.save()
-                const R = 18
-                ctx.strokeStyle = '#9598a1'
-                ctx.lineWidth = 1.5
                 ctx.setLineDash([])
-                ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.stroke()
-                // Handle line (bottom-right)
-                ctx.lineWidth = 2
-                ctx.beginPath(); ctx.moveTo(x + R * 0.7, y + R * 0.7); ctx.lineTo(x + R * 0.7 + 7, y + R * 0.7 + 7); ctx.stroke()
-                // Inner cross ticks
-                ctx.lineWidth = 1
+
+                // Outer pulsing ring
+                const now = performance.now()
+                const pulsePhase = (now % 1200) / 1200
+                const pulseR = 18 + pulsePhase * 8
+                const pulseAlpha = 0.6 * (1 - pulsePhase)
+                ctx.strokeStyle = '#f6465d'
+                ctx.lineWidth = 1.5
+                ctx.globalAlpha = pulseAlpha
                 ctx.beginPath()
-                ctx.moveTo(x, y - R + 2); ctx.lineTo(x, y - 4)
-                ctx.moveTo(x, y + 4); ctx.lineTo(x, y + R - 2)
-                ctx.moveTo(x - R + 2, y); ctx.lineTo(x - 4, y)
-                ctx.moveTo(x + 4, y); ctx.lineTo(x + R - 2, y)
+                ctx.arc(x, y, pulseR, 0, Math.PI * 2)
                 ctx.stroke()
+
+                // Solid red circle (static)
+                ctx.globalAlpha = 0.85
+                ctx.lineWidth = 2
+                ctx.strokeStyle = '#f6465d'
+                ctx.beginPath()
+                ctx.arc(x, y, 14, 0, Math.PI * 2)
+                ctx.stroke()
+
                 ctx.restore()
+
+                // Schedule next frame to animate the pulse (use RAF directly to avoid circular dep)
+                if (!rafRef.current) {
+                    rafRef.current = requestAnimationFrame(() => {
+                        rafRef.current = null
+                        redraw()
+                    })
+                }
             }
         }
     }, [canvasRef, hiddenAll])
@@ -1520,6 +1527,8 @@ export function useDrawingTools({
     // ── Mouse Down ────────────────────────────────────────────────────────────────
     const handleMouseDown = useCallback((e) => {
         const tool = activeToolRef.current
+        // Cursor modes: canvas has pointerEvents none, so this won't fire anyway
+        // But keep guard for safety
         if (isCursorMode(tool) || lockedAll) return
         const xy = getCanvasXY(e)
         if (!xy) return
@@ -1594,9 +1603,14 @@ export function useDrawingTools({
         // Luôn cập nhật vị trí con trỏ để redraw crosshair dóng
         cursorRef.current = { x: xy.x, y: xy.y }
 
-        // Cursor overlay modes only need redraw
+        // Cursor overlay modes only need redraw — force immediate for smooth tracking
         if (tool === 'cross' || tool === 'dot_cursor' || tool === 'demo_cursor') {
-            scheduleRedraw()
+            // Cancel pending RAF and redraw immediately for smooth dot/demo movement
+            if (rafRef.current) {
+                cancelAnimationFrame(rafRef.current)
+                rafRef.current = null
+            }
+            redraw()
             return
         }
 
@@ -1617,7 +1631,7 @@ export function useDrawingTools({
             // Chưa click điểm đầu nhưng đang ở drawing mode → vẫn cần redraw để hiện crosshair
             scheduleRedraw()
         }
-    }, [isCursorMode, scheduleRedraw])
+    }, [isCursorMode, scheduleRedraw, redraw])
 
     // ── Mouse Leave — xóa crosshair khi rời canvas ───────────────────────────
     const handleMouseLeave = useCallback(() => {
@@ -1692,16 +1706,20 @@ export function useDrawingTools({
         }
     }
 
-    const cursorStyle = activeTool === 'cross' || activeTool === 'dot_cursor'
-        ? 'none'   // we draw our own crosshair/dot on canvas
-        : activeTool === 'demo_cursor'
-            ? 'none'   // demonstration: magnifier-style, drawn on canvas
-            : isCursorMode(activeTool)
-                ? 'default'
-                : activeTool === 'brush' || activeTool === 'highlighter' ? 'crosshair'
-                    : activeTool === 'text' || activeTool === 'anchored_txt' ? 'text'
-                        : activeTool === 'measure' || activeTool === 'price_range' || activeTool === 'date_range' ? 'cell'
-                            : 'crosshair'
+    const cursorStyle = activeTool === 'cross'
+        ? 'crosshair'  // native OS crosshair cursor (+)
+        : activeTool === 'dot_cursor'
+            ? 'none'   // we draw plain dot on canvas
+            : activeTool === 'demo_cursor'
+                ? 'default'  // native arrow; we draw red circle on canvas
+                : activeTool === 'cursor'
+                    ? 'default'  // arrow mặc định
+                    : isCursorMode(activeTool)
+                        ? 'default'
+                        : activeTool === 'brush' || activeTool === 'highlighter' ? 'crosshair'
+                            : activeTool === 'text' || activeTool === 'anchored_txt' ? 'text'
+                                : activeTool === 'measure' || activeTool === 'price_range' || activeTool === 'date_range' ? 'cell'
+                                    : 'crosshair'
 
     return {
         drawings,
@@ -1710,6 +1728,10 @@ export function useDrawingTools({
         lockedAll,
         handleAction,
         scheduleRedraw,
+        // Expose these so ChartPanel can forward events from mainContainerRef
+        // when canvas has pointerEvents:none (cursor modes)
+        handleCursorMove: handleMouseMove,
+        handleCursorLeave: handleMouseLeave,
         canvasProps: {
             onMouseDown: handleMouseDown,
             onMouseMove: handleMouseMove,
@@ -1720,7 +1742,10 @@ export function useDrawingTools({
             style: {
                 position: 'absolute', top: 0, left: 0,
                 width: '100%', height: '100%',
-                pointerEvents: (isCursorMode(activeTool) && activeTool !== 'cross' && activeTool !== 'dot_cursor' && activeTool !== 'demo_cursor') ? 'none' : 'all',
+                // Cursor modes (cross/dot/demo/arrow): pointerEvents none
+                // → lightweight-charts nhận đầy đủ events (trục X, Y, drag, scroll)
+                // Drawing modes: pointerEvents all → canvas nhận click để vẽ
+                pointerEvents: isCursorMode(activeTool) ? 'none' : 'all',
                 cursor: cursorStyle,
                 zIndex: 10,
             },

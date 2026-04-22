@@ -3775,6 +3775,8 @@ export default function ChartPanel() {
     lockedAll,
     handleAction,
     canvasProps,
+    handleCursorMove,
+    handleCursorLeave,
   } = useDrawingTools({
     canvasRef: canvasOverlayRef,
     activeTool,
@@ -3791,8 +3793,10 @@ export default function ChartPanel() {
   const currentLabel = ALL_INTERVALS.find(i => i.value === interval)?.label ?? interval
   const isPinned = PINNED.includes(interval)
 
-  // Khi đang ở drawing mode → disable isDragging để tránh conflict
+  // Khi đang ở drawing mode → canvas overlay nhận events để vẽ
+  // cursor / cross / dot_cursor / demo_cursor → KHÔNG phải drawing mode
   const isDrawingMode = activeTool !== 'cursor' && activeTool !== 'cross'
+    && activeTool !== 'dot_cursor' && activeTool !== 'demo_cursor'
 
   // ── Tạo tất cả charts một lần ────────────────────────────────────────────
   useEffect(() => {
@@ -4101,6 +4105,48 @@ export default function ChartPanel() {
       bbLowerRef.current?.setData(lower)
     }
   }, [showBB])
+
+  // ── Override cursor của lightweight-charts và ẩn crosshair khi cần ────────
+  // LW inject cursor:crosshair vào canvas nội bộ — dùng style tag để force override
+  useEffect(() => {
+    const container = mainContainerRef.current
+    const chart = mainChartRef.current
+    if (!chart) return
+
+    // Ẩn crosshair cho dot_cursor mode
+    if (activeTool === 'dot_cursor') {
+      chart.applyOptions({ crosshair: { mode: 3 } }) // Hidden
+    } else {
+      chart.applyOptions({
+        crosshair: {
+          mode: 0,
+          vertLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139' },
+          horzLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139' },
+        },
+      })
+    }
+
+    // Override cursor CSS — inject vào <head> với !important để đè LW inline style
+    if (!container) return
+    container.setAttribute('data-lw-cursor-host', '1')
+    let styleEl = document.getElementById('lw-cursor-override-style')
+    if (!styleEl) {
+      styleEl = document.createElement('style')
+      styleEl.id = 'lw-cursor-override-style'
+      document.head.appendChild(styleEl)
+    }
+    const cursorValue =
+      isDragging ? 'grabbing'
+      : activeTool === 'dot_cursor' ? 'none'
+      : activeTool === 'cursor' ? 'default'
+      : activeTool === 'demo_cursor' ? 'default'
+      : null  // cross + drawing modes: để LW tự xử lý (crosshair)
+    if (cursorValue) {
+      styleEl.textContent = `[data-lw-cursor-host] canvas { cursor: ${cursorValue} !important; }`
+    } else {
+      styleEl.textContent = ''
+    }
+  }, [activeTool, isDragging])
 
   // ── Resize main chart khi panels thay đổi ─────────────────────────────────
   useEffect(() => {
@@ -4497,7 +4543,7 @@ export default function ChartPanel() {
             </div>
           )}
 
-          {/* Canvas overlay cho drawing tools — PHẢI ở trước mainContainerRef */}
+          {/* Canvas overlay cho drawing tools */}
           <canvas
             ref={canvasOverlayRef}
             {...canvasProps}
@@ -4507,14 +4553,10 @@ export default function ChartPanel() {
           <div
             ref={mainContainerRef}
             className="w-full h-full"
-            style={{
-              cursor: isDrawingMode
-                ? 'none'              // Canvas overlay tự handle cursor khi vẽ
-                : isDragging ? 'grabbing' : 'crosshair',
-            }}
+            onMouseMove={!isDrawingMode ? handleCursorMove : undefined}
+            onMouseLeave={!isDrawingMode ? handleCursorLeave : undefined}
             onMouseDown={() => { if (!isDrawingMode) setIsDragging(true) }}
             onMouseUp={() => setIsDragging(false)}
-            onMouseLeave={() => setIsDragging(false)}
           />
         </div>
 
