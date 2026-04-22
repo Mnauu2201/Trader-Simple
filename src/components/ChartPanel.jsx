@@ -1,0 +1,4611 @@
+// import { useEffect, useRef, useState, useCallback } from 'react'
+// import { createChart, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts'
+// import { useChartStore } from '../store/chartStore'
+// import { useKlineData } from '../hooks/useKlineData'
+// import DrawingToolbar from './DrawingToolbar'
+// import { useDrawingTools } from '../hooks/useDrawingTools'
+
+// // ── Interval groups ──────────────────────────────────────────────────────────
+// const INTERVAL_GROUPS = [
+//   {
+//     label: 'Phút',
+//     items: [
+//       { label: '1m',  value: '1m' },
+//       { label: '3m',  value: '3m' },
+//       { label: '5m',  value: '5m' },
+//       { label: '15m', value: '15m' },
+//       { label: '30m', value: '30m' },
+//     ],
+//   },
+//   {
+//     label: 'Giờ',
+//     items: [
+//       { label: '1h',  value: '1h' },
+//       { label: '2h',  value: '2h' },
+//       { label: '4h',  value: '4h' },
+//       { label: '6h',  value: '6h' },
+//       { label: '8h',  value: '8h' },
+//       { label: '12h', value: '12h' },
+//     ],
+//   },
+//   {
+//     label: 'Ngày / Tuần / Tháng',
+//     items: [
+//       { label: '1D', value: '1d' },
+//       { label: '3D', value: '3d' },
+//       { label: '1W', value: '1w' },
+//       { label: '1M', value: '1M' },
+//     ],
+//   },
+// ]
+
+// const ALL_INTERVALS = INTERVAL_GROUPS.flatMap(g => g.items)
+// const PINNED = ['15m', '1h', '4h', '1d', '1w']
+
+// const MA_CONFIGS = [
+//   { period: 20,  color: '#f0b90b', label: 'MA20' },
+//   { period: 50,  color: '#2196f3', label: 'MA50' },
+//   { period: 200, color: '#e91e63', label: 'MA200' },
+// ]
+
+// const EMA_CONFIGS = [
+//   { period: 9,  color: '#ff6b35', label: 'EMA9' },
+//   { period: 21, color: '#a855f7', label: 'EMA21' },
+// ]
+
+// const RSI_PERIOD  = 14
+// const MACD_FAST   = 12
+// const MACD_SLOW   = 26
+// const MACD_SIGNAL = 9
+// const BB_PERIOD   = 20
+// const BB_MULT     = 2
+
+// // ── Helpers ──────────────────────────────────────────────────────────────────
+
+// function calcMA(data, period) {
+//   const result = []
+//   let sum = 0
+//   for (let i = 0; i < data.length; i++) {
+//     sum += data[i].close
+//     if (i >= period) sum -= data[i - period].close
+//     if (i >= period - 1) result.push({ time: data[i].time, value: sum / period })
+//   }
+//   return result
+// }
+
+// function calcEMALine(data, period) {
+//   if (data.length < period) return { series: [], lastEMA: null }
+//   const k = 2 / (period + 1)
+//   let ema = 0
+//   for (let i = 0; i < period; i++) ema += data[i].close
+//   ema /= period
+//   const series = [{ time: data[period - 1].time, value: ema }]
+//   for (let i = period; i < data.length; i++) {
+//     ema = data[i].close * k + ema * (1 - k)
+//     series.push({ time: data[i].time, value: ema })
+//   }
+//   return { series, lastEMA: ema }
+// }
+
+// function calcBB(data, period = BB_PERIOD, mult = BB_MULT) {
+//   const upper = [], middle = [], lower = []
+//   let sum = 0
+//   const win = []
+//   for (let i = 0; i < data.length; i++) {
+//     const c = data[i].close
+//     win.push(c); sum += c
+//     if (win.length > period) sum -= win.shift()
+//     if (win.length === period) {
+//       const avg = sum / period
+//       let sq = 0
+//       for (let j = 0; j < win.length; j++) sq += (win[j] - avg) ** 2
+//       const sd = Math.sqrt(sq / period)
+//       middle.push({ time: data[i].time, value: avg })
+//       upper.push({  time: data[i].time, value: avg + mult * sd })
+//       lower.push({  time: data[i].time, value: avg - mult * sd })
+//     }
+//   }
+//   return { upper, middle, lower }
+// }
+
+// function calcBBIncr(data, period = BB_PERIOD, mult = BB_MULT) {
+//   if (data.length < period) return null
+//   const win = data.slice(-period)
+//   const avg = win.reduce((s, d) => s + d.close, 0) / period
+//   let sq = 0
+//   for (let i = 0; i < win.length; i++) sq += (win[i].close - avg) ** 2
+//   const sd = Math.sqrt(sq / period)
+//   return { time: data[data.length - 1].time, avg, upper: avg + mult * sd, lower: avg - mult * sd }
+// }
+
+// function calcRSIFull(data, period = 14) {
+//   if (data.length < period + 1) return { values: [], state: null }
+//   const values = []
+//   let avgGain = 0, avgLoss = 0
+//   for (let i = 1; i <= period; i++) {
+//     const d = data[i].close - data[i - 1].close
+//     if (d > 0) avgGain += d; else avgLoss += Math.abs(d)
+//   }
+//   avgGain /= period; avgLoss /= period
+//   values.push({ time: data[period].time, value: avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss) })
+//   for (let i = period + 1; i < data.length; i++) {
+//     const d = data[i].close - data[i - 1].close
+//     avgGain = (avgGain * (period - 1) + Math.max(d, 0)) / period
+//     avgLoss = (avgLoss * (period - 1) + Math.max(-d, 0)) / period
+//     values.push({ time: data[i].time, value: avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss) })
+//   }
+//   return { values, state: { avgGain, avgLoss } }
+// }
+
+// function calcEMAFull(closes, period) {
+//   if (closes.length < period) return { values: [], lastEMA: null }
+//   const k = 2 / (period + 1)
+//   let ema = closes.slice(0, period).reduce((s, v) => s + v, 0) / period
+//   const values = [ema]
+//   for (let i = period; i < closes.length; i++) {
+//     ema = closes[i] * k + ema * (1 - k)
+//     values.push(ema)
+//   }
+//   return { values, lastEMA: ema }
+// }
+
+// function calcMACDFull(data, fast = 12, slow = 26, signal = 9) {
+//   if (data.length < slow + signal) {
+//     return { macdLine: [], signalLine: [], histogram: [], state: null }
+//   }
+//   const closes = data.map(d => d.close)
+//   const kFast  = 2 / (fast + 1)
+//   const kSlow  = 2 / (slow + 1)
+//   const kSig   = 2 / (signal + 1)
+//   const { values: emaFastAll, lastEMA: lastFast } = calcEMAFull(closes, fast)
+//   const { values: emaSlowAll, lastEMA: lastSlow } = calcEMAFull(closes, slow)
+//   const offset = slow - fast
+//   const macdRaw = emaSlowAll.map((sv, i) => sv != null ? emaFastAll[i + offset] - sv : null).filter(v => v != null)
+//   if (macdRaw.length < signal) {
+//     return { macdLine: [], signalLine: [], histogram: [], state: null }
+//   }
+//   const { values: signalAll, lastEMA: lastSignalEMA } = calcEMAFull(macdRaw, signal)
+//   const macdLine = [], signalLine = [], histogram = []
+//   signalAll.forEach((sv, i) => {
+//     const dataIdx = slow - 1 + i + (signal - 1)
+//     if (dataIdx >= data.length) return
+//     const mv = macdRaw[i + signal - 1]
+//     if (mv == null) return
+//     const hv = mv - sv
+//     macdLine.push({ time: data[dataIdx].time, value: mv })
+//     signalLine.push({ time: data[dataIdx].time, value: sv })
+//     histogram.push({ time: data[dataIdx].time, value: hv, color: hv >= 0 ? '#0ecb8188' : '#f6465d88' })
+//   })
+//   const lastMacd = macdLine.length ? macdLine[macdLine.length - 1].value : 0
+//   return {
+//     macdLine, signalLine, histogram,
+//     state: {
+//       lastEmaFast: lastFast,
+//       lastEmaSlow: lastSlow,
+//       lastSignal:  lastSignalEMA ?? lastMacd,
+//       kFast, kSlow, kSig,
+//     },
+//   }
+// }
+
+// function fmtPrice(p) {
+//   if (p == null || !isFinite(p)) return '---'
+//   if (p >= 10000)  return p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+//   if (p >= 1000)   return p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+//   if (p >= 100)    return p.toFixed(3)
+//   if (p >= 10)     return p.toFixed(4)
+//   if (p >= 1)      return p.toFixed(4)
+//   if (p >= 0.1)    return p.toFixed(5)
+//   if (p >= 0.01)   return p.toFixed(6)
+//   if (p >= 0.001)  return p.toFixed(7)
+//   if (p >= 0.0001) return p.toFixed(8)
+//   return p.toFixed(10)
+// }
+
+// function fmtMacd(v) {
+//   if (v == null || !isFinite(v)) return '---'
+//   const a = Math.abs(v)
+//   return a >= 0.0001 ? v.toFixed(4) : v.toExponential(2)
+// }
+
+// function fmtVol(n) {
+//   if (!isFinite(n) || n <= 0) return '---'
+//   if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B'
+//   if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'
+//   if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K'
+//   return n.toFixed(2)
+// }
+
+// function getPriceFormat(price) {
+//   if (!price || !isFinite(price) || price <= 0) {
+//     return { type: 'price', precision: 8, minMove: 0.00000001 }
+//   }
+//   if (price >= 10000)  return { type: 'price', precision: 2,  minMove: 0.01       }
+//   if (price >= 1000)   return { type: 'price', precision: 2,  minMove: 0.01       }
+//   if (price >= 100)    return { type: 'price', precision: 3,  minMove: 0.001      }
+//   if (price >= 10)     return { type: 'price', precision: 4,  minMove: 0.0001     }
+//   if (price >= 1)      return { type: 'price', precision: 4,  minMove: 0.0001     }
+//   if (price >= 0.1)    return { type: 'price', precision: 5,  minMove: 0.00001    }
+//   if (price >= 0.01)   return { type: 'price', precision: 6,  minMove: 0.000001   }
+//   if (price >= 0.001)  return { type: 'price', precision: 7,  minMove: 0.0000001  }
+//   if (price >= 0.0001) return { type: 'price', precision: 8,  minMove: 0.00000001 }
+//   return               { type: 'price', precision: 10, minMove: 0.0000000001 }
+// }
+
+// function throttle(fn, ms) {
+//   let last = 0, timer = null
+//   return function (...args) {
+//     const now = Date.now()
+//     const remaining = ms - (now - last)
+//     if (remaining <= 0) {
+//       if (timer) { clearTimeout(timer); timer = null }
+//       last = now
+//       fn.apply(this, args)
+//     } else {
+//       clearTimeout(timer)
+//       timer = setTimeout(() => {
+//         last = Date.now(); timer = null
+//         fn.apply(this, args)
+//       }, remaining)
+//     }
+//   }
+// }
+
+// // ── Component ────────────────────────────────────────────────────────────────
+// export default function ChartPanel() {
+//   const mainContainerRef = useRef(null)
+//   const rsiContainerRef  = useRef(null)
+//   const macdContainerRef = useRef(null)
+
+//   // ── Canvas overlay ref cho drawing tools ──
+//   const canvasOverlayRef = useRef(null)
+
+//   const mainChartRef  = useRef(null)
+//   const rsiChartRef   = useRef(null)
+//   const macdChartRef  = useRef(null)
+//   const candleRef     = useRef(null)
+//   const volumeRef     = useRef(null)
+//   const maRefs        = useRef({})
+//   const emaRefs       = useRef({})
+//   const emaStateRef   = useRef({})
+//   const rsiLineRef    = useRef(null)
+//   const macdLineRef   = useRef(null)
+//   const macdSignalRef = useRef(null)
+//   const macdHistRef   = useRef(null)
+//   const bbUpperRef    = useRef(null)
+//   const bbMiddleRef   = useRef(null)
+//   const bbLowerRef    = useRef(null)
+
+//   const klineDataRef  = useRef([])
+//   const rsiStateRef   = useRef(null)
+//   const macdStateRef  = useRef(null)
+//   const loadMoreRef     = useRef(null)   // fn được useKlineData gán — gọi để load nến cũ hơn
+//   const isLoadingBanner = useRef(false)  // tránh hiện banner loading nhiều lần
+
+//   const [showPicker,  setShowPicker]  = useState(false)
+//   const [tooltip,     setTooltip]     = useState(null)
+//   const [macdTooltip, setMacdTooltip] = useState(null)
+//   const [isDragging,      setIsDragging]      = useState(false)
+//   const [isLoadingOlder, setIsLoadingOlder] = useState(false)  // hiện spinner khi load nến cũ
+
+//   // ── Drawing tool state ────────────────────────────────────────────────────
+//   const [activeTool,   setActiveTool]   = useState('cursor')
+//   const [drawingColor, setDrawingColor] = useState('#2962ff')
+//   const [lineWidth,    setLineWidth]    = useState(1)
+//   const [lineStyle,    setLineStyle]    = useState('solid')
+//   const [keepDrawing,  setKeepDrawing]  = useState(false)
+//   const [magnetMode,   setMagnetMode]   = useState('none')  // 'none' | 'weak' | 'strong'
+
+//   // pixelToPrice: chuyển canvas Y coordinate → giá
+//   const pixelToPriceRef = useRef(null)
+//   const pixelToPrice = useCallback((y) => pixelToPriceRef.current?.(y) ?? null, [])
+
+//   // pixelToTime: chuyển canvas X coordinate → Date (cho crosshair label trục X)
+//   const pixelToTimeRef2 = useRef(null)
+//   const pixelToTime = useCallback((x) => pixelToTimeRef2.current?.(x) ?? null, [])
+
+//   const {
+//     symbol, interval, market, setInterval,
+//     showMA, setShowMA,
+//     showEMA, setShowEMA,
+//     showRSI, setShowRSI,
+//     showVolume, setShowVolume,
+//     showMACD, setShowMACD,
+//     showBB, setShowBB,
+//   } = useChartStore()
+
+//   // ── Drawing tools hook ────────────────────────────────────────────────────
+//   const {
+//     drawingCount,
+//     hiddenAll,
+//     lockedAll,
+//     handleAction,
+//     canvasProps,
+//   } = useDrawingTools({
+//     canvasRef:    canvasOverlayRef,
+//     activeTool,
+//     drawingColor,
+//     lineWidth,
+//     lineStyle,
+//     onToolChange: setActiveTool,
+//     keepDrawing,
+//     magnetMode,
+//     pixelToPrice,
+//     pixelToTime,
+//   })
+
+//   const currentLabel = ALL_INTERVALS.find(i => i.value === interval)?.label ?? interval
+//   const isPinned = PINNED.includes(interval)
+
+//   // Khi đang ở drawing mode → disable isDragging để tránh conflict
+//   const isDrawingMode = activeTool !== 'cursor' && activeTool !== 'cross'
+
+//   // ── Tạo tất cả charts một lần ────────────────────────────────────────────
+//   useEffect(() => {
+//     if (!mainContainerRef.current || !rsiContainerRef.current || !macdContainerRef.current) return
+
+//     const baseLayout = {
+//       background: { color: '#0b0e11' },
+//       textColor: '#848e9c',
+//       fontFamily: 'Inter, system-ui, sans-serif',
+//       attributionLogo: false,
+//     }
+//     const baseGrid = {
+//       vertLines: { color: '#1a1d26', style: 1 },
+//       horzLines: { color: '#1a1d26', style: 1 },
+//     }
+//     const subCrosshair = {
+//       mode: 1,
+//       vertLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139' },
+//       horzLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139', labelVisible: true },
+//     }
+
+//     const mainChart = createChart(mainContainerRef.current, {
+//       autoSize: true,
+//       layout: { ...baseLayout, fontSize: 11 },
+//       grid: baseGrid,
+//       crosshair: {
+//         mode: 0,
+//         vertLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139' },
+//         horzLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139' },
+//       },
+//       rightPriceScale: {
+//         borderColor: '#1a1d26',
+//         scaleMargins: { top: 0.08, bottom: 0.22 },
+//         textColor: '#848e9c',
+//       },
+//       timeScale: {
+//         borderColor: '#1a1d26',
+//         timeVisible: true,
+//         secondsVisible: false,
+//         barSpacing: 6,
+//         minBarSpacing: 0.5,
+//         maxBarSpacing: 20,
+//         rightOffset: 12,
+//         lockVisibleTimeRangeOnResize: true,
+//       },
+//     })
+
+//     const candles = mainChart.addSeries(CandlestickSeries, {
+//       upColor: '#0ecb81', downColor: '#f6465d',
+//       borderUpColor: '#0ecb81', borderDownColor: '#f6465d',
+//       wickUpColor: '#0ecb81', wickDownColor: '#f6465d',
+//       thinBars: true,
+//       candleBodyMaxWidth: 8,
+//       candleWickMaxWidth: 1,
+//     })
+
+//     const volume = mainChart.addSeries(HistogramSeries, {
+//       priceFormat: { type: 'volume' },
+//       priceScaleId: 'vol',
+//     })
+//     mainChart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
+
+//     const maSeriesMap = {}
+//     MA_CONFIGS.forEach(cfg => {
+//       maSeriesMap[cfg.period] = mainChart.addSeries(LineSeries, {
+//         color: cfg.color, lineWidth: 1,
+//         priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+//         visible: cfg.period !== 200,
+//       })
+//     })
+
+//     const emaSeriesMap = {}
+//     EMA_CONFIGS.forEach(cfg => {
+//       emaSeriesMap[cfg.period] = mainChart.addSeries(LineSeries, {
+//         color: cfg.color, lineWidth: 1, lineStyle: 0,
+//         priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+//         visible: false,
+//       })
+//     })
+
+//     const bbUpper = mainChart.addSeries(LineSeries, {
+//       color: '#26a69a', lineWidth: 1, lineStyle: 2,
+//       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+//       visible: false,
+//     })
+//     const bbMiddle = mainChart.addSeries(LineSeries, {
+//       color: '#26a69a66', lineWidth: 1, lineStyle: 2,
+//       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+//       visible: false,
+//     })
+//     const bbLower = mainChart.addSeries(LineSeries, {
+//       color: '#26a69a', lineWidth: 1, lineStyle: 2,
+//       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+//       visible: false,
+//     })
+
+//     const rsiChart = createChart(rsiContainerRef.current, {
+//       autoSize: true,
+//       layout: { ...baseLayout, fontSize: 10 },
+//       grid: baseGrid,
+//       crosshair: subCrosshair,
+//       rightPriceScale: { borderColor: '#1a1d26', textColor: '#848e9c', scaleMargins: { top: 0.1, bottom: 0.1 } },
+//       timeScale: { visible: false },
+//       handleScroll: false, handleScale: false,
+//     })
+
+//     const rsiLine = rsiChart.addSeries(LineSeries, {
+//       color: '#9c27b0', lineWidth: 1.5,
+//       priceLineVisible: false, lastValueVisible: true,
+//     })
+//     rsiLine.createPriceLine({ price: 70, color: '#f6465d88', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'OB' })
+//     rsiLine.createPriceLine({ price: 30, color: '#0ecb8188', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'OS' })
+
+//     const macdChart = createChart(macdContainerRef.current, {
+//       autoSize: true,
+//       layout: { ...baseLayout, fontSize: 10 },
+//       grid: baseGrid,
+//       crosshair: subCrosshair,
+//       rightPriceScale: { borderColor: '#1a1d26', textColor: '#848e9c', scaleMargins: { top: 0.1, bottom: 0.1 } },
+//       timeScale: { visible: false },
+//       handleScroll: false, handleScale: false,
+//     })
+
+//     const macdHist = macdChart.addSeries(HistogramSeries, {
+//       priceFormat: { type: 'price', precision: 6, minMove: 0.000001 },
+//       lastValueVisible: false,
+//     })
+//     const macdLine = macdChart.addSeries(LineSeries, {
+//       color: '#2196f3', lineWidth: 1.5,
+//       priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: true,
+//     })
+//     const macdSignal = macdChart.addSeries(LineSeries, {
+//       color: '#ff9800', lineWidth: 1,
+//       priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: true,
+//     })
+//     macdLine.createPriceLine({ price: 0, color: '#4c525e', lineWidth: 1, lineStyle: 1, axisLabelVisible: false })
+
+//     mainChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+//       if (!range) return
+//       rsiChart.timeScale().setVisibleLogicalRange(range)
+//       macdChart.timeScale().setVisibleLogicalRange(range)
+
+//       // ── Infinite scroll backward: khi scroll đến gần đầu chart (from < 10 nến) ──
+//       if (range.from < 10 && loadMoreRef.current && !isLoadingBanner.current) {
+//         isLoadingBanner.current = true
+//         setIsLoadingOlder(true)
+//         loadMoreRef.current().finally(() => {
+//           isLoadingBanner.current = false
+//           setIsLoadingOlder(false)
+//         })
+//       }
+//     })
+
+//     const onMain = throttle((param) => {
+//       if (!param.time || !param.point) { setTooltip(null); return }
+//       const bar = param.seriesData?.get(candles)
+//       const vol = param.seriesData?.get(volume)
+//       if (!bar) { setTooltip(null); return }
+//       const maValues = {}
+//       MA_CONFIGS.forEach(cfg => {
+//         const v = param.seriesData?.get(maSeriesMap[cfg.period])
+//         if (v) maValues[cfg.period] = v.value
+//       })
+//       const emaValues = {}
+//       EMA_CONFIGS.forEach(cfg => {
+//         const v = param.seriesData?.get(emaSeriesMap[cfg.period])
+//         if (v) emaValues[cfg.period] = v.value
+//       })
+//       const bbU = param.seriesData?.get(bbUpper)
+//       const bbM = param.seriesData?.get(bbMiddle)
+//       const bbL = param.seriesData?.get(bbLower)
+//       const bbValues = (bbU && bbM && bbL) ? { upper: bbU.value, middle: bbM.value, lower: bbL.value } : null
+//       setTooltip({ open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: vol?.value ?? 0, isUp: bar.close >= bar.open, maValues, emaValues, bbValues })
+//     }, 16)
+
+//     const onMacd = throttle((param) => {
+//       if (!param.time || !param.point) { setMacdTooltip(null); return }
+//       const m = param.seriesData?.get(macdLine)
+//       const s = param.seriesData?.get(macdSignal)
+//       const h = param.seriesData?.get(macdHist)
+//       if (!m) { setMacdTooltip(null); return }
+//       setMacdTooltip({ macd: m?.value, signal: s?.value, hist: h?.value })
+//     }, 16)
+
+//     mainChart.subscribeCrosshairMove(onMain)
+//     macdChart.subscribeCrosshairMove(onMacd)
+
+//     mainChartRef.current   = mainChart
+//     rsiChartRef.current    = rsiChart
+//     macdChartRef.current   = macdChart
+//     candleRef.current      = candles
+//     volumeRef.current      = volume
+//     maRefs.current         = maSeriesMap
+//     emaRefs.current        = emaSeriesMap
+//     rsiLineRef.current     = rsiLine
+//     macdLineRef.current    = macdLine
+//     macdSignalRef.current  = macdSignal
+//     macdHistRef.current    = macdHist
+//     bbUpperRef.current     = bbUpper
+//     bbMiddleRef.current    = bbMiddle
+//     bbLowerRef.current     = bbLower
+
+//     // ── Wire pixelToPrice từ priceScale của mainChart ──
+//     // Canvas overlay absolute top:0 left:0 trên container cha.
+//     // lightweight-charts vẽ chart pane bên trong container — cùng origin nên Y giống nhau.
+//     // Tuy nhiên mainChart.priceScale('right').coordinateToPrice(y) nhận y tính từ
+//     // phần trên của chart pane (không bao gồm topbar của lw-charts).
+//     // Dùng getBoundingClientRect để tính offset chính xác.
+//     pixelToPriceRef.current = (canvasY) => {
+//       try {
+//         const canvas   = canvasOverlayRef.current
+//         const chartDiv = mainContainerRef.current
+//         if (!canvas || !chartDiv) return null
+//         // Tìm phần tử <canvas> bên trong lightweight-charts (chart pane thực sự)
+//         const lwCanvas = chartDiv.querySelector('canvas')
+//         if (lwCanvas) {
+//           const lwRect     = lwCanvas.getBoundingClientRect()
+//           const canvasRect = canvas.getBoundingClientRect()
+//           // y tương đối so với lw-chart canvas
+//           const yInChart = canvasY - (lwRect.top - canvasRect.top)
+//           return mainChart.priceScale('right').coordinateToPrice(yInChart)
+//         }
+//         return mainChart.priceScale('right').coordinateToPrice(canvasY)
+//       } catch {
+//         return null
+//       }
+//     }
+
+//     // ── Wire pixelToTime từ timeScale của mainChart ──
+//     // coordinateToTime trả về Unix timestamp (số giây) — lightweight-charts dùng UTC.
+//     pixelToTimeRef2.current = (canvasX) => {
+//       try {
+//         const canvas   = canvasOverlayRef.current
+//         const chartDiv = mainContainerRef.current
+//         if (!canvas || !chartDiv) return null
+//         const lwCanvas = chartDiv.querySelector('canvas')
+//         let xInChart = canvasX
+//         if (lwCanvas) {
+//           const lwRect     = lwCanvas.getBoundingClientRect()
+//           const canvasRect = canvas.getBoundingClientRect()
+//           xInChart = canvasX - (lwRect.left - canvasRect.left)
+//         }
+//         const ts = mainChart.timeScale().coordinateToTime(xInChart)
+//         if (ts == null) return null
+//         // lightweight-charts trả về seconds epoch (UTC) hoặc 'yyyy-mm-dd' string
+//         if (typeof ts === 'number') return new Date(ts * 1000)  // ms UTC
+//         if (typeof ts === 'string') return new Date(ts)          // parse ISO date
+//         return null
+//       } catch {
+//         return null
+//       }
+//     }
+
+//     return () => {
+//       mainChart.remove(); rsiChart.remove(); macdChart.remove()
+//       mainChartRef.current = rsiChartRef.current = macdChartRef.current = null
+//       candleRef.current = volumeRef.current = null
+//       maRefs.current = {}
+//       emaRefs.current = {}
+//       emaStateRef.current = {}
+//       rsiLineRef.current = macdLineRef.current = macdSignalRef.current = macdHistRef.current = null
+//       bbUpperRef.current = bbMiddleRef.current = bbLowerRef.current = null
+//       pixelToPriceRef.current = null
+//       pixelToTimeRef2.current = null
+//     }
+//   }, [])
+
+//   // ── Toggle MA ──────────────────────────────────────────────────────────────
+//   useEffect(() => {
+//     MA_CONFIGS.forEach(cfg => maRefs.current[cfg.period]?.applyOptions({ visible: showMA[cfg.period] }))
+//   }, [showMA])
+
+//   // ── Toggle EMA ─────────────────────────────────────────────────────────────
+//   useEffect(() => {
+//     EMA_CONFIGS.forEach(cfg => {
+//       emaRefs.current[cfg.period]?.applyOptions({ visible: showEMA[cfg.period] })
+//     })
+//     EMA_CONFIGS.forEach(cfg => {
+//       if (showEMA[cfg.period] && klineDataRef.current.length >= cfg.period) {
+//         const { series } = calcEMALine(klineDataRef.current, cfg.period)
+//         emaRefs.current[cfg.period]?.setData(series)
+//       }
+//     })
+//   }, [showEMA])
+
+//   // ── Toggle Volume ──────────────────────────────────────────────────────────
+//   useEffect(() => {
+//     volumeRef.current?.applyOptions({ visible: showVolume })
+//   }, [showVolume])
+
+//   // ── Toggle BB ─────────────────────────────────────────────────────────────
+//   useEffect(() => {
+//     bbUpperRef.current?.applyOptions({ visible: showBB })
+//     bbMiddleRef.current?.applyOptions({ visible: showBB })
+//     bbLowerRef.current?.applyOptions({ visible: showBB })
+//     if (showBB && klineDataRef.current.length >= BB_PERIOD) {
+//       const { upper, middle, lower } = calcBB(klineDataRef.current)
+//       bbUpperRef.current?.setData(upper)
+//       bbMiddleRef.current?.setData(middle)
+//       bbLowerRef.current?.setData(lower)
+//     }
+//   }, [showBB])
+
+//   // ── Resize main chart khi panels thay đổi ─────────────────────────────────
+//   useEffect(() => {
+//     const bottom = (showRSI ? 0.18 : 0) + (showMACD ? 0.18 : 0)
+//     mainChartRef.current?.applyOptions({
+//       rightPriceScale: { scaleMargins: { top: 0.08, bottom: Math.max(bottom, 0.08) } },
+//     })
+//     setTimeout(() => mainChartRef.current?.timeScale().fitContent(), 50)
+//   }, [showRSI, showMACD])
+
+//   // ── onData: full calc sau khi REST load ───────────────────────────────────
+//   const onKlineData = useCallback((data) => {
+//     klineDataRef.current = [...data]
+
+//     if (data.length > 0) {
+//       const samplePrice = data[data.length - 1].close
+//       const fmt = getPriceFormat(samplePrice)
+//       candleRef.current?.applyOptions({ priceFormat: fmt })
+//       MA_CONFIGS.forEach(cfg => maRefs.current[cfg.period]?.applyOptions({ priceFormat: fmt }))
+//       EMA_CONFIGS.forEach(cfg => emaRefs.current[cfg.period]?.applyOptions({ priceFormat: fmt }))
+//       bbUpperRef.current?.applyOptions({ priceFormat: fmt })
+//       bbMiddleRef.current?.applyOptions({ priceFormat: fmt })
+//       bbLowerRef.current?.applyOptions({ priceFormat: fmt })
+//     }
+
+//     MA_CONFIGS.forEach(cfg => maRefs.current[cfg.period]?.setData(calcMA(data, cfg.period)))
+
+//     EMA_CONFIGS.forEach(cfg => {
+//       if (data.length < cfg.period) return
+//       const { series, lastEMA } = calcEMALine(data, cfg.period)
+//       emaRefs.current[cfg.period]?.setData(series)
+//       emaStateRef.current[cfg.period] = lastEMA
+//     })
+
+//     if (bbUpperRef.current && data.length >= BB_PERIOD) {
+//       const { upper, middle, lower } = calcBB(data)
+//       bbUpperRef.current.setData(upper)
+//       bbMiddleRef.current.setData(middle)
+//       bbLowerRef.current.setData(lower)
+//     }
+
+//     const { values: rsiVals, state: rsiState } = calcRSIFull(data, RSI_PERIOD)
+//     if (rsiVals.length > 0) {
+//       rsiLineRef.current?.setData(rsiVals)
+//       rsiStateRef.current = rsiState
+//     }
+
+//     const { macdLine, signalLine, histogram, state: macdState } = calcMACDFull(data, MACD_FAST, MACD_SLOW, MACD_SIGNAL)
+//     if (macdLine.length > 0) {
+//       macdLineRef.current?.setData(macdLine)
+//       macdSignalRef.current?.setData(signalLine)
+//       macdHistRef.current?.setData(histogram)
+//       macdStateRef.current = macdState
+//     }
+//   }, [])
+
+//   // ── onUpdate: O(1) per tick ───────────────────────────────────────────────
+//   const onKlineUpdate = useCallback((candle) => {
+//     const data = klineDataRef.current
+//     if (!data.length) return
+
+//     const last = data[data.length - 1]
+//     const isNew = last.time !== candle.time
+//     if (isNew) data.push({ ...candle })
+//     else data[data.length - 1] = { ...last, ...candle }
+
+//     MA_CONFIGS.forEach(cfg => {
+//       const s = maRefs.current[cfg.period]
+//       if (!s || data.length < cfg.period) return
+//       const sum = data.slice(-cfg.period).reduce((a, x) => a + x.close, 0)
+//       s.update({ time: candle.time, value: sum / cfg.period })
+//     })
+
+//     EMA_CONFIGS.forEach(cfg => {
+//       const s = emaRefs.current[cfg.period]
+//       if (!s) return
+//       const lastEMA = emaStateRef.current[cfg.period]
+//       if (lastEMA == null) return
+//       const k = 2 / (cfg.period + 1)
+//       const newEMA = candle.close * k + lastEMA * (1 - k)
+//       s.update({ time: candle.time, value: newEMA })
+//       if (isNew) emaStateRef.current[cfg.period] = newEMA
+//     })
+
+//     if (data.length >= BB_PERIOD) {
+//       const bb = calcBBIncr(data)
+//       if (bb) {
+//         bbUpperRef.current?.update({ time: bb.time, value: bb.upper })
+//         bbMiddleRef.current?.update({ time: bb.time, value: bb.avg })
+//         bbLowerRef.current?.update({ time: bb.time, value: bb.lower })
+//       }
+//     }
+
+//     if (rsiStateRef.current && data.length >= 2) {
+//       const prev = data[data.length - 2]
+//       const diff = candle.close - prev.close
+//       let { avgGain: g, avgLoss: l } = rsiStateRef.current
+//       const newG = (g * (RSI_PERIOD - 1) + Math.max(diff, 0)) / RSI_PERIOD
+//       const newL = (l * (RSI_PERIOD - 1) + Math.max(-diff, 0)) / RSI_PERIOD
+//       const val  = newL === 0 ? 100 : 100 - 100 / (1 + newG / newL)
+//       rsiLineRef.current?.update({ time: candle.time, value: val })
+//       if (isNew) rsiStateRef.current = { avgGain: newG, avgLoss: newL }
+//     }
+
+//     const ms = macdStateRef.current
+//     if (ms && ms.lastEmaFast != null) {
+//       const newFast   = candle.close * ms.kFast + ms.lastEmaFast * (1 - ms.kFast)
+//       const newSlow   = candle.close * ms.kSlow + ms.lastEmaSlow * (1 - ms.kSlow)
+//       const newMacd   = newFast - newSlow
+//       const newSignal = newMacd * ms.kSig + ms.lastSignal * (1 - ms.kSig)
+//       const newHist   = newMacd - newSignal
+
+//       macdLineRef.current?.update({ time: candle.time, value: newMacd })
+//       macdSignalRef.current?.update({ time: candle.time, value: newSignal })
+//       macdHistRef.current?.update({ time: candle.time, value: newHist, color: newHist >= 0 ? '#0ecb8188' : '#f6465d88' })
+
+//       if (isNew) {
+//         macdStateRef.current = { ...ms, lastEmaFast: newFast, lastEmaSlow: newSlow, lastSignal: newSignal }
+//       }
+//     }
+//   }, [])
+
+//   // ── onPrepend: nhận nến cũ hơn từ useKlineData, merge vào klineDataRef + setData ──
+//   const onKlinePrepend = useCallback((olderData) => {
+//     if (!olderData || olderData.length === 0) return
+
+//     const existing = klineDataRef.current
+//     // Merge: older trước, existing sau, loại trùng time
+//     const merged = [...olderData]
+//     const oldestExisting = existing.length > 0 ? existing[0].time : Infinity
+//     for (const d of existing) {
+//       if (d.time > olderData[olderData.length - 1].time) merged.push(d)
+//     }
+//     // Sắp xếp lại theo time tăng dần (Binance thường đã sorted)
+//     merged.sort((a, b) => a.time - b.time)
+//     klineDataRef.current = merged
+
+//     // setData toàn bộ lên chart (lightweight-charts hỗ trợ prepend qua setData)
+//     candleRef.current?.setData(merged)
+//     if (volumeRef.current) {
+//       volumeRef.current.setData(merged.map(d => ({
+//         time:  d.time,
+//         value: d.volume,
+//         color: d.close >= d.open ? '#0ecb8155' : '#f6465d55',
+//       })))
+//     }
+
+//     // Recalc toàn bộ indicators trên data mới
+//     MA_CONFIGS.forEach(cfg => maRefs.current[cfg.period]?.setData(calcMA(merged, cfg.period)))
+//     EMA_CONFIGS.forEach(cfg => {
+//       if (merged.length < cfg.period) return
+//       const { series, lastEMA } = calcEMALine(merged, cfg.period)
+//       emaRefs.current[cfg.period]?.setData(series)
+//       emaStateRef.current[cfg.period] = lastEMA
+//     })
+//     if (merged.length >= BB_PERIOD) {
+//       const { upper, middle, lower } = calcBB(merged)
+//       bbUpperRef.current?.setData(upper)
+//       bbMiddleRef.current?.setData(middle)
+//       bbLowerRef.current?.setData(lower)
+//     }
+//     const { values: rsiVals, state: rsiState } = calcRSIFull(merged, RSI_PERIOD)
+//     if (rsiVals.length > 0) { rsiLineRef.current?.setData(rsiVals); rsiStateRef.current = rsiState }
+//     const { macdLine, signalLine, histogram, state: macdState } = calcMACDFull(merged, MACD_FAST, MACD_SLOW, MACD_SIGNAL)
+//     if (macdLine.length > 0) {
+//       macdLineRef.current?.setData(macdLine)
+//       macdSignalRef.current?.setData(signalLine)
+//       macdHistRef.current?.setData(histogram)
+//       macdStateRef.current = macdState
+//     }
+//   }, [])
+
+//   useKlineData(candleRef, volumeRef, symbol, interval, market, onKlineData, onKlineUpdate, onKlinePrepend, loadMoreRef)
+
+//   const activePanels   = (showRSI ? 1 : 0) + (showMACD ? 1 : 0)
+//   const panelHeightPct = activePanels === 1 ? 22 : 18
+
+//   // ─────────────────────────────────────────────────────────────────────────
+//   // JSX: thêm DrawingToolbar bên trái + canvas overlay trên chart chính
+//   // ─────────────────────────────────────────────────────────────────────────
+//   return (
+//     // Outer: flex ngang — DrawingToolbar | chart area
+//     <div className={`flex h-full bg-[#0b0e11] overflow-hidden ${isDragging ? 'chart-grabbing' : ''}`}>
+
+//       {/* ── Drawing Toolbar (dọc bên trái) ── */}
+//       <DrawingToolbar
+//         activeTool={activeTool}
+//         onToolChange={setActiveTool}
+//         onAction={handleAction}
+//         drawingColor={drawingColor}
+//         onColorChange={setDrawingColor}
+//         lineWidth={lineWidth}
+//         onLineWidthChange={setLineWidth}
+//         lineStyle={lineStyle}
+//         onLineStyleChange={setLineStyle}
+//         hiddenAll={hiddenAll}
+//         lockedAll={lockedAll}
+//         drawingCount={drawingCount}
+//         keepDrawing={keepDrawing}
+//         onKeepDrawingChange={setKeepDrawing}
+//         magnetMode={magnetMode}
+//         onMagnetModeChange={setMagnetMode}
+//       />
+
+//       {/* ── Chart area (flex-col như cũ) ── */}
+//       <div className="flex flex-col flex-1 min-w-0 h-full relative">
+
+//         {/* ── Toolbar row ── */}
+//         <div className="flex items-center gap-1 px-3 py-1.5 border-b border-[#1a1d26] flex-shrink-0 bg-[#0b0e11] flex-wrap">
+
+//           <div className="flex items-center gap-0.5">
+//             {ALL_INTERVALS.filter(i => PINNED.includes(i.value)).map(i => (
+//               <button key={i.value} onClick={() => setInterval(i.value)}
+//                 className={`px-2.5 py-1 text-xs rounded transition-all ${
+//                   interval === i.value ? 'bg-[#f0b90b1a] text-[#f0b90b] font-medium' : 'text-[#848e9c] hover:text-white hover:bg-[#1e2329]'
+//                 }`}>
+//                 {i.label}
+//               </button>
+//             ))}
+//           </div>
+
+//           <div className="w-px h-4 bg-[#2b3139] mx-1" />
+
+//           <button onClick={() => setShowPicker(p => !p)}
+//             className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded transition-all ${
+//               !isPinned ? 'bg-[#f0b90b1a] text-[#f0b90b] font-medium' : 'text-[#848e9c] hover:text-white hover:bg-[#1e2329]'
+//             }`}>
+//             {!isPinned ? currentLabel : 'Thêm'}
+//             <svg width="10" height="10" viewBox="0 0 10 10">
+//               <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round"/>
+//             </svg>
+//           </button>
+
+//           <div className="w-px h-4 bg-[#2b3139] mx-1" />
+
+//           <div className="flex items-center gap-1 flex-wrap">
+//             {MA_CONFIGS.map(cfg => (
+//               <button key={cfg.period}
+//                 onClick={() => setShowMA({ ...showMA, [cfg.period]: !showMA[cfg.period] })}
+//                 className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showMA[cfg.period] ? 'border-transparent font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'}`}
+//                 style={showMA[cfg.period] ? { color: cfg.color, background: cfg.color + '1a', borderColor: cfg.color + '44' } : {}}>
+//                 {cfg.label}
+//               </button>
+//             ))}
+
+//             {EMA_CONFIGS.map(cfg => (
+//               <button key={cfg.period}
+//                 onClick={() => setShowEMA({ ...showEMA, [cfg.period]: !showEMA[cfg.period] })}
+//                 className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showEMA[cfg.period] ? 'border-transparent font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'}`}
+//                 style={showEMA[cfg.period] ? { color: cfg.color, background: cfg.color + '1a', borderColor: cfg.color + '44' } : {}}>
+//                 {cfg.label}
+//               </button>
+//             ))}
+
+//             <button onClick={() => setShowBB(!showBB)}
+//               className={`px-2 py-0.5 text-[10px] rounded border transition-all ${
+//                 showBB ? 'bg-[#26a69a1a] text-[#26a69a] border-[#26a69a44] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+//               }`}>
+//               BB(20,2)
+//             </button>
+
+//             <button onClick={() => setShowRSI(!showRSI)}
+//               className={`px-2 py-0.5 text-[10px] rounded border transition-all ${
+//                 showRSI ? 'bg-[#9c27b01a] text-[#ce93d8] border-[#9c27b044] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+//               }`}>
+//               RSI{RSI_PERIOD}
+//             </button>
+
+//             <button onClick={() => setShowMACD(!showMACD)}
+//               className={`px-2 py-0.5 text-[10px] rounded border transition-all ${
+//                 showMACD ? 'bg-[#2196f31a] text-[#64b5f6] border-[#2196f344] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+//               }`}>
+//               MACD
+//             </button>
+
+//             <button onClick={() => setShowVolume(!showVolume)}
+//               className={`px-2 py-0.5 text-[10px] rounded border transition-all ${
+//                 showVolume ? 'bg-[#4c525e1a] text-[#848e9c] border-[#4c525e44]' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+//               }`}>
+//               VOL
+//             </button>
+//           </div>
+
+//           <div className="ml-auto">
+//             <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${
+//               market === 'futures' ? 'bg-[#f0b90b1a] text-[#f0b90b]' : 'bg-[#0ecb811a] text-[#0ecb81]'
+//             }`}>
+//               {market === 'futures' ? 'FUTURES' : 'SPOT'}
+//             </span>
+//           </div>
+//         </div>
+
+//         {/* ── Interval picker dropdown ── */}
+//         {showPicker && (
+//           <>
+//             <div className="fixed inset-0 z-10" onClick={() => setShowPicker(false)} />
+//             <div className="absolute top-10 left-3 z-20 bg-[#1e2329] border border-[#2b3139] rounded-lg shadow-2xl p-4 w-72">
+//               {INTERVAL_GROUPS.map(group => (
+//                 <div key={group.label} className="mb-3 last:mb-0">
+//                   <p className="text-[10px] text-[#5e6673] uppercase tracking-wider mb-2 font-medium">{group.label}</p>
+//                   <div className="flex flex-wrap gap-1.5">
+//                     {group.items.map(i => (
+//                       <button key={i.value}
+//                         onClick={() => { setInterval(i.value); setShowPicker(false) }}
+//                         className={`px-3 py-1.5 text-xs rounded transition-all ${
+//                           interval === i.value ? 'bg-[#f0b90b] text-black font-semibold' : 'bg-[#2b3139] text-[#848e9c] hover:bg-[#363c45] hover:text-white'
+//                         }`}>
+//                         {i.label}
+//                       </button>
+//                     ))}
+//                   </div>
+//                 </div>
+//               ))}
+//             </div>
+//           </>
+//         )}
+
+//         {/* ── OHLCV Tooltip ── */}
+//         {tooltip && (
+//           <div className="absolute top-10 left-3 z-10 pointer-events-none">
+//             <div className="flex items-center gap-3 bg-[#1e2329cc] backdrop-blur-sm px-3 py-1.5 rounded text-[11px] border border-[#2b3139] flex-wrap">
+//               <span className={tooltip.isUp ? 'text-[#0ecb81]' : 'text-[#f6465d]'}>O <span className="text-[#eaecef]">{fmtPrice(tooltip.open)}</span></span>
+//               <span className="text-[#0ecb81]">H <span className="text-[#eaecef]">{fmtPrice(tooltip.high)}</span></span>
+//               <span className="text-[#f6465d]">L <span className="text-[#eaecef]">{fmtPrice(tooltip.low)}</span></span>
+//               <span className={tooltip.isUp ? 'text-[#0ecb81]' : 'text-[#f6465d]'}>C <span className="text-[#eaecef]">{fmtPrice(tooltip.close)}</span></span>
+//               <span className="text-[#5e6673]">V <span className="text-[#848e9c]">{fmtVol(tooltip.volume)}</span></span>
+//               {MA_CONFIGS.map(cfg =>
+//                 showMA[cfg.period] && tooltip.maValues?.[cfg.period] ? (
+//                   <span key={cfg.period} style={{ color: cfg.color }}>
+//                     {cfg.label} <span className="text-[#eaecef]">{fmtPrice(tooltip.maValues[cfg.period])}</span>
+//                   </span>
+//                 ) : null
+//               )}
+//               {EMA_CONFIGS.map(cfg =>
+//                 showEMA[cfg.period] && tooltip.emaValues?.[cfg.period] ? (
+//                   <span key={cfg.period} style={{ color: cfg.color }}>
+//                     {cfg.label} <span className="text-[#eaecef]">{fmtPrice(tooltip.emaValues[cfg.period])}</span>
+//                   </span>
+//                 ) : null
+//               )}
+//               {showBB && tooltip.bbValues && (
+//                 <>
+//                   <span className="text-[#26a69a]">BB↑ <span className="text-[#eaecef]">{fmtPrice(tooltip.bbValues.upper)}</span></span>
+//                   <span className="text-[#26a69a66]">BB— <span className="text-[#eaecef]">{fmtPrice(tooltip.bbValues.middle)}</span></span>
+//                   <span className="text-[#26a69a]">BB↓ <span className="text-[#eaecef]">{fmtPrice(tooltip.bbValues.lower)}</span></span>
+//                 </>
+//               )}
+//             </div>
+//           </div>
+//         )}
+
+//         {/* ── Main chart + Canvas overlay ─────────────────────────────────── */}
+//         {/*
+//           Container này cần position: relative để canvas absolute hoạt động.
+//           Canvas overlay nằm trên chart, nhận pointer-events khi đang vẽ.
+//         */}
+//         <div
+//           className="relative w-full"
+//           style={{ flex: '1 1 0', minHeight: 0 }}
+//         >
+//           {/* ── Loading older candles banner ── */}
+//           {isLoadingOlder && (
+//             <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+//               <div className="flex items-center gap-2 bg-[#1e2329dd] backdrop-blur-sm border border-[#2b3139] rounded-full px-3 py-1.5 shadow-lg">
+//                 <svg className="animate-spin w-3 h-3 text-[#f0b90b]" viewBox="0 0 24 24" fill="none">
+//                   <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25"/>
+//                   <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+//                 </svg>
+//                 <span className="text-[10px] text-[#848e9c]">Đang tải nến cũ hơn...</span>
+//               </div>
+//             </div>
+//           )}
+
+//           {/* Canvas overlay cho drawing tools — PHẢI ở trước mainContainerRef */}
+//           <canvas
+//             ref={canvasOverlayRef}
+//             {...canvasProps}
+//           />
+
+//           {/* Main lightweight-chart */}
+//           <div
+//             ref={mainContainerRef}
+//             className="w-full h-full"
+//             style={{
+//               cursor: isDrawingMode
+//                 ? 'none'              // Canvas overlay tự handle cursor khi vẽ
+//                 : isDragging ? 'grabbing' : 'crosshair',
+//             }}
+//             onMouseDown={() => { if (!isDrawingMode) setIsDragging(true) }}
+//             onMouseUp={() => setIsDragging(false)}
+//             onMouseLeave={() => setIsDragging(false)}
+//           />
+//         </div>
+
+//         {/* ── RSI panel ── */}
+//         <div
+//           className="flex-shrink-0 border-t border-[#1a1d26] overflow-hidden transition-all duration-200"
+//           style={{ height: showRSI ? `${panelHeightPct}%` : '0', minHeight: showRSI ? 70 : 0 }}
+//         >
+//           <div className="flex items-center gap-2 px-3 py-0.5 bg-[#0b0e11]">
+//             <span className="text-[9px] text-[#9c27b0] font-medium">RSI({RSI_PERIOD})</span>
+//             <span className="text-[9px] text-[#f6465d66]">— OB 70</span>
+//             <span className="text-[9px] text-[#0ecb8166]">— OS 30</span>
+//           </div>
+//           <div
+//             ref={rsiContainerRef}
+//             className="w-full"
+//             style={{
+//               height: 'calc(100% - 20px)',
+//               cursor: isDragging ? 'grabbing' : 'crosshair',
+//             }}
+//             onMouseDown={() => setIsDragging(true)}
+//             onMouseUp={() => setIsDragging(false)}
+//             onMouseLeave={() => setIsDragging(false)}
+//           />
+//         </div>
+
+//         {/* ── MACD panel ── */}
+//         <div
+//           className="flex-shrink-0 border-t border-[#1a1d26] overflow-hidden transition-all duration-200"
+//           style={{ height: showMACD ? `${panelHeightPct}%` : '0', minHeight: showMACD ? 70 : 0 }}
+//         >
+//           <div className="flex items-center gap-3 px-3 py-0.5 bg-[#0b0e11]">
+//             <span className="text-[9px] text-[#64b5f6] font-medium">MACD({MACD_FAST},{MACD_SLOW},{MACD_SIGNAL})</span>
+//             <span className="text-[9px] text-[#2196f3]">— MACD</span>
+//             <span className="text-[9px] text-[#ff9800]">— Signal</span>
+//             <span className="text-[9px] text-[#848e9c]">█ Hist</span>
+//             {macdTooltip && (
+//               <span className="ml-1 flex items-center gap-2">
+//                 <span className="text-[9px] text-[#2196f3]">M <span className="text-[#eaecef]">{fmtMacd(macdTooltip.macd)}</span></span>
+//                 <span className="text-[9px] text-[#ff9800]">S <span className="text-[#eaecef]">{fmtMacd(macdTooltip.signal)}</span></span>
+//                 <span className={`text-[9px] ${(macdTooltip.hist ?? 0) >= 0 ? 'text-[#0ecb81]' : 'text-[#f6465d]'}`}>
+//                   H <span className="text-[#eaecef]">{fmtMacd(macdTooltip.hist)}</span>
+//                 </span>
+//               </span>
+//             )}
+//           </div>
+//           <div
+//             ref={macdContainerRef}
+//             className="w-full"
+//             style={{
+//               height: 'calc(100% - 20px)',
+//               cursor: isDragging ? 'grabbing' : 'crosshair',
+//             }}
+//             onMouseDown={() => setIsDragging(true)}
+//             onMouseUp={() => setIsDragging(false)}
+//             onMouseLeave={() => setIsDragging(false)}
+//           />
+//         </div>
+
+//       </div>
+//     </div>
+//   )
+// }
+
+// import { useEffect, useRef, useState, useCallback } from 'react'
+// import { createChart, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts'
+// import { useChartStore } from '../store/chartStore'
+// import { useKlineData } from '../hooks/useKlineData'
+// import DrawingToolbar from './DrawingToolbar'
+// import { useDrawingTools } from '../hooks/useDrawingTools'
+
+// // ── Interval groups ──────────────────────────────────────────────────────────
+// const INTERVAL_GROUPS = [
+//   {
+//     label: 'Phút',
+//     items: [
+//       { label: '1m',  value: '1m' },
+//       { label: '3m',  value: '3m' },
+//       { label: '5m',  value: '5m' },
+//       { label: '15m', value: '15m' },
+//       { label: '30m', value: '30m' },
+//     ],
+//   },
+//   {
+//     label: 'Giờ',
+//     items: [
+//       { label: '1h',  value: '1h' },
+//       { label: '2h',  value: '2h' },
+//       { label: '4h',  value: '4h' },
+//       { label: '6h',  value: '6h' },
+//       { label: '8h',  value: '8h' },
+//       { label: '12h', value: '12h' },
+//     ],
+//   },
+//   {
+//     label: 'Ngày / Tuần / Tháng',
+//     items: [
+//       { label: '1D', value: '1d' },
+//       { label: '3D', value: '3d' },
+//       { label: '1W', value: '1w' },
+//       { label: '1M', value: '1M' },
+//     ],
+//   },
+// ]
+
+// const ALL_INTERVALS = INTERVAL_GROUPS.flatMap(g => g.items)
+// const PINNED = ['15m', '1h', '4h', '1d', '1w']
+
+// const MA_CONFIGS = [
+//   { period: 20,  color: '#f0b90b', label: 'MA20' },
+//   { period: 50,  color: '#2196f3', label: 'MA50' },
+//   { period: 200, color: '#e91e63', label: 'MA200' },
+// ]
+
+// const EMA_CONFIGS = [
+//   { period: 9,  color: '#ff6b35', label: 'EMA9' },
+//   { period: 21, color: '#a855f7', label: 'EMA21' },
+// ]
+
+// const RSI_PERIOD  = 14
+// const MACD_FAST   = 12
+// const MACD_SLOW   = 26
+// const MACD_SIGNAL = 9
+// const BB_PERIOD   = 20
+// const BB_MULT     = 2
+
+// // ── Helpers ──────────────────────────────────────────────────────────────────
+
+// function calcMA(data, period) {
+//   const result = []
+//   let sum = 0
+//   for (let i = 0; i < data.length; i++) {
+//     sum += data[i].close
+//     if (i >= period) sum -= data[i - period].close
+//     if (i >= period - 1) result.push({ time: data[i].time, value: sum / period })
+//   }
+//   return result
+// }
+
+// function calcEMALine(data, period) {
+//   if (data.length < period) return { series: [], lastEMA: null }
+//   const k = 2 / (period + 1)
+//   let ema = 0
+//   for (let i = 0; i < period; i++) ema += data[i].close
+//   ema /= period
+//   const series = [{ time: data[period - 1].time, value: ema }]
+//   for (let i = period; i < data.length; i++) {
+//     ema = data[i].close * k + ema * (1 - k)
+//     series.push({ time: data[i].time, value: ema })
+//   }
+//   return { series, lastEMA: ema }
+// }
+
+// function calcBB(data, period = BB_PERIOD, mult = BB_MULT) {
+//   const upper = [], middle = [], lower = []
+//   let sum = 0
+//   const win = []
+//   for (let i = 0; i < data.length; i++) {
+//     const c = data[i].close
+//     win.push(c); sum += c
+//     if (win.length > period) sum -= win.shift()
+//     if (win.length === period) {
+//       const avg = sum / period
+//       let sq = 0
+//       for (let j = 0; j < win.length; j++) sq += (win[j] - avg) ** 2
+//       const sd = Math.sqrt(sq / period)
+//       middle.push({ time: data[i].time, value: avg })
+//       upper.push({  time: data[i].time, value: avg + mult * sd })
+//       lower.push({  time: data[i].time, value: avg - mult * sd })
+//     }
+//   }
+//   return { upper, middle, lower }
+// }
+
+// function calcBBIncr(data, period = BB_PERIOD, mult = BB_MULT) {
+//   if (data.length < period) return null
+//   const win = data.slice(-period)
+//   const avg = win.reduce((s, d) => s + d.close, 0) / period
+//   let sq = 0
+//   for (let i = 0; i < win.length; i++) sq += (win[i].close - avg) ** 2
+//   const sd = Math.sqrt(sq / period)
+//   return { time: data[data.length - 1].time, avg, upper: avg + mult * sd, lower: avg - mult * sd }
+// }
+
+// function calcRSIFull(data, period = 14) {
+//   if (data.length < period + 1) return { values: [], state: null }
+//   const values = []
+//   let avgGain = 0, avgLoss = 0
+//   for (let i = 1; i <= period; i++) {
+//     const d = data[i].close - data[i - 1].close
+//     if (d > 0) avgGain += d; else avgLoss += Math.abs(d)
+//   }
+//   avgGain /= period; avgLoss /= period
+//   values.push({ time: data[period].time, value: avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss) })
+//   for (let i = period + 1; i < data.length; i++) {
+//     const d = data[i].close - data[i - 1].close
+//     avgGain = (avgGain * (period - 1) + Math.max(d, 0)) / period
+//     avgLoss = (avgLoss * (period - 1) + Math.max(-d, 0)) / period
+//     values.push({ time: data[i].time, value: avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss) })
+//   }
+//   return { values, state: { avgGain, avgLoss } }
+// }
+
+// function calcEMAFull(closes, period) {
+//   if (closes.length < period) return { values: [], lastEMA: null }
+//   const k = 2 / (period + 1)
+//   let ema = closes.slice(0, period).reduce((s, v) => s + v, 0) / period
+//   const values = [ema]
+//   for (let i = period; i < closes.length; i++) {
+//     ema = closes[i] * k + ema * (1 - k)
+//     values.push(ema)
+//   }
+//   return { values, lastEMA: ema }
+// }
+
+// function calcMACDFull(data, fast = 12, slow = 26, signal = 9) {
+//   if (data.length < slow + signal) {
+//     return { macdLine: [], signalLine: [], histogram: [], state: null }
+//   }
+//   const closes = data.map(d => d.close)
+//   const kFast  = 2 / (fast + 1)
+//   const kSlow  = 2 / (slow + 1)
+//   const kSig   = 2 / (signal + 1)
+//   const { values: emaFastAll, lastEMA: lastFast } = calcEMAFull(closes, fast)
+//   const { values: emaSlowAll, lastEMA: lastSlow } = calcEMAFull(closes, slow)
+//   const offset = slow - fast
+//   const macdRaw = emaSlowAll.map((sv, i) => sv != null ? emaFastAll[i + offset] - sv : null).filter(v => v != null)
+//   if (macdRaw.length < signal) {
+//     return { macdLine: [], signalLine: [], histogram: [], state: null }
+//   }
+//   const { values: signalAll, lastEMA: lastSignalEMA } = calcEMAFull(macdRaw, signal)
+//   const macdLine = [], signalLine = [], histogram = []
+//   signalAll.forEach((sv, i) => {
+//     const dataIdx = slow - 1 + i + (signal - 1)
+//     if (dataIdx >= data.length) return
+//     const mv = macdRaw[i + signal - 1]
+//     if (mv == null) return
+//     const hv = mv - sv
+//     macdLine.push({ time: data[dataIdx].time, value: mv })
+//     signalLine.push({ time: data[dataIdx].time, value: sv })
+//     histogram.push({ time: data[dataIdx].time, value: hv, color: hv >= 0 ? '#0ecb8188' : '#f6465d88' })
+//   })
+//   const lastMacd = macdLine.length ? macdLine[macdLine.length - 1].value : 0
+//   return {
+//     macdLine, signalLine, histogram,
+//     state: {
+//       lastEmaFast: lastFast,
+//       lastEmaSlow: lastSlow,
+//       lastSignal:  lastSignalEMA ?? lastMacd,
+//       kFast, kSlow, kSig,
+//     },
+//   }
+// }
+
+// function fmtPrice(p) {
+//   if (p == null || !isFinite(p)) return '---'
+//   if (p >= 10000)  return p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+//   if (p >= 1000)   return p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+//   if (p >= 100)    return p.toFixed(3)
+//   if (p >= 10)     return p.toFixed(4)
+//   if (p >= 1)      return p.toFixed(4)
+//   if (p >= 0.1)    return p.toFixed(5)
+//   if (p >= 0.01)   return p.toFixed(6)
+//   if (p >= 0.001)  return p.toFixed(7)
+//   if (p >= 0.0001) return p.toFixed(8)
+//   return p.toFixed(10)
+// }
+
+// function fmtMacd(v) {
+//   if (v == null || !isFinite(v)) return '---'
+//   const a = Math.abs(v)
+//   return a >= 0.0001 ? v.toFixed(4) : v.toExponential(2)
+// }
+
+// function fmtVol(n) {
+//   if (!isFinite(n) || n <= 0) return '---'
+//   if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B'
+//   if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'
+//   if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K'
+//   return n.toFixed(2)
+// }
+
+// function getPriceFormat(price) {
+//   if (!price || !isFinite(price) || price <= 0) {
+//     return { type: 'price', precision: 8, minMove: 0.00000001 }
+//   }
+//   if (price >= 10000)  return { type: 'price', precision: 2,  minMove: 0.01       }
+//   if (price >= 1000)   return { type: 'price', precision: 2,  minMove: 0.01       }
+//   if (price >= 100)    return { type: 'price', precision: 3,  minMove: 0.001      }
+//   if (price >= 10)     return { type: 'price', precision: 4,  minMove: 0.0001     }
+//   if (price >= 1)      return { type: 'price', precision: 4,  minMove: 0.0001     }
+//   if (price >= 0.1)    return { type: 'price', precision: 5,  minMove: 0.00001    }
+//   if (price >= 0.01)   return { type: 'price', precision: 6,  minMove: 0.000001   }
+//   if (price >= 0.001)  return { type: 'price', precision: 7,  minMove: 0.0000001  }
+//   if (price >= 0.0001) return { type: 'price', precision: 8,  minMove: 0.00000001 }
+//   return               { type: 'price', precision: 10, minMove: 0.0000000001 }
+// }
+
+// function throttle(fn, ms) {
+//   let last = 0, timer = null
+//   return function (...args) {
+//     const now = Date.now()
+//     const remaining = ms - (now - last)
+//     if (remaining <= 0) {
+//       if (timer) { clearTimeout(timer); timer = null }
+//       last = now
+//       fn.apply(this, args)
+//     } else {
+//       clearTimeout(timer)
+//       timer = setTimeout(() => {
+//         last = Date.now(); timer = null
+//         fn.apply(this, args)
+//       }, remaining)
+//     }
+//   }
+// }
+
+// // ── Component ────────────────────────────────────────────────────────────────
+// export default function ChartPanel() {
+//   const mainContainerRef = useRef(null)
+//   const rsiContainerRef  = useRef(null)
+//   const macdContainerRef = useRef(null)
+
+//   // ── Canvas overlay ref cho drawing tools ──
+//   const canvasOverlayRef = useRef(null)
+
+//   const mainChartRef  = useRef(null)
+//   const rsiChartRef   = useRef(null)
+//   const macdChartRef  = useRef(null)
+//   const candleRef     = useRef(null)
+//   const volumeRef     = useRef(null)
+//   const maRefs        = useRef({})
+//   const emaRefs       = useRef({})
+//   const emaStateRef   = useRef({})
+//   const rsiLineRef    = useRef(null)
+//   const macdLineRef   = useRef(null)
+//   const macdSignalRef = useRef(null)
+//   const macdHistRef   = useRef(null)
+//   const bbUpperRef    = useRef(null)
+//   const bbMiddleRef   = useRef(null)
+//   const bbLowerRef    = useRef(null)
+
+//   const klineDataRef  = useRef([])
+//   const rsiStateRef   = useRef(null)
+//   const macdStateRef  = useRef(null)
+//   const loadMoreRef     = useRef(null)   // fn được useKlineData gán — gọi để load nến cũ hơn
+//   const isLoadingBanner = useRef(false)  // tránh hiện banner loading nhiều lần
+
+//   const [showPicker,  setShowPicker]  = useState(false)
+//   const [tooltip,     setTooltip]     = useState(null)
+//   const [macdTooltip, setMacdTooltip] = useState(null)
+//   const [isDragging,      setIsDragging]      = useState(false)
+//   const [isLoadingOlder, setIsLoadingOlder] = useState(false)  // hiện spinner khi load nến cũ
+
+//   // ── Drawing tool state ────────────────────────────────────────────────────
+//   const [activeTool,   setActiveTool]   = useState('cursor')
+//   const [drawingColor, setDrawingColor] = useState('#2962ff')
+//   const [lineWidth,    setLineWidth]    = useState(1)
+//   const [lineStyle,    setLineStyle]    = useState('solid')
+//   const [keepDrawing,  setKeepDrawing]  = useState(false)
+//   const [magnetMode,   setMagnetMode]   = useState('none')  // 'none' | 'weak' | 'strong'
+
+//   // pixelToPrice: chuyển canvas Y coordinate → giá
+//   const pixelToPriceRef = useRef(null)
+//   const pixelToPrice = useCallback((y) => pixelToPriceRef.current?.(y) ?? null, [])
+
+//   // pixelToTime: chuyển canvas X coordinate → Date (cho crosshair label trục X)
+//   const pixelToTimeRef2 = useRef(null)
+//   const pixelToTime = useCallback((x) => pixelToTimeRef2.current?.(x) ?? null, [])
+
+//   const {
+//     symbol, interval, market, setInterval,
+//     showMA, setShowMA,
+//     showEMA, setShowEMA,
+//     showRSI, setShowRSI,
+//     showVolume, setShowVolume,
+//     showMACD, setShowMACD,
+//     showBB, setShowBB,
+//   } = useChartStore()
+
+//   // ── Drawing tools hook ────────────────────────────────────────────────────
+//   const {
+//     drawingCount,
+//     hiddenAll,
+//     lockedAll,
+//     handleAction,
+//     canvasProps,
+//   } = useDrawingTools({
+//     canvasRef:    canvasOverlayRef,
+//     activeTool,
+//     drawingColor,
+//     lineWidth,
+//     lineStyle,
+//     onToolChange: setActiveTool,
+//     keepDrawing,
+//     magnetMode,
+//     pixelToPrice,
+//     pixelToTime,
+//   })
+
+//   const currentLabel = ALL_INTERVALS.find(i => i.value === interval)?.label ?? interval
+//   const isPinned = PINNED.includes(interval)
+
+//   // Khi đang ở drawing mode → disable isDragging để tránh conflict
+//   const isDrawingMode = activeTool !== 'cursor' && activeTool !== 'cross'
+
+//   // ── Tạo tất cả charts một lần ────────────────────────────────────────────
+//   useEffect(() => {
+//     if (!mainContainerRef.current || !rsiContainerRef.current || !macdContainerRef.current) return
+
+//     const baseLayout = {
+//       background: { color: '#0b0e11' },
+//       textColor: '#848e9c',
+//       fontFamily: 'Inter, system-ui, sans-serif',
+//       attributionLogo: false,
+//     }
+//     const baseGrid = {
+//       vertLines: { color: '#1a1d26', style: 1 },
+//       horzLines: { color: '#1a1d26', style: 1 },
+//     }
+//     const subCrosshair = {
+//       mode: 1,
+//       vertLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139' },
+//       horzLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139', labelVisible: true },
+//     }
+
+//     const mainChart = createChart(mainContainerRef.current, {
+//       autoSize: true,
+//       layout: { ...baseLayout, fontSize: 11 },
+//       grid: baseGrid,
+//       crosshair: {
+//         mode: 0,
+//         vertLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139' },
+//         horzLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139' },
+//       },
+//       rightPriceScale: {
+//         borderColor: '#1a1d26',
+//         scaleMargins: { top: 0.08, bottom: 0.22 },
+//         textColor: '#848e9c',
+//       },
+//       timeScale: {
+//         borderColor: '#1a1d26',
+//         timeVisible: true,
+//         secondsVisible: false,
+//         barSpacing: 6,
+//         minBarSpacing: 0.5,
+//         maxBarSpacing: 20,
+//         rightOffset: 12,
+//         lockVisibleTimeRangeOnResize: true,
+//       },
+//     })
+
+//     const candles = mainChart.addSeries(CandlestickSeries, {
+//       upColor: '#0ecb81', downColor: '#f6465d',
+//       borderUpColor: '#0ecb81', borderDownColor: '#f6465d',
+//       wickUpColor: '#0ecb81', wickDownColor: '#f6465d',
+//       thinBars: true,
+//       candleBodyMaxWidth: 8,
+//       candleWickMaxWidth: 1,
+//     })
+
+//     const volume = mainChart.addSeries(HistogramSeries, {
+//       priceFormat: { type: 'volume' },
+//       priceScaleId: 'vol',
+//     })
+//     mainChart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
+
+//     const maSeriesMap = {}
+//     MA_CONFIGS.forEach(cfg => {
+//       maSeriesMap[cfg.period] = mainChart.addSeries(LineSeries, {
+//         color: cfg.color, lineWidth: 1,
+//         priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+//         visible: cfg.period !== 200,
+//       })
+//     })
+
+//     const emaSeriesMap = {}
+//     EMA_CONFIGS.forEach(cfg => {
+//       emaSeriesMap[cfg.period] = mainChart.addSeries(LineSeries, {
+//         color: cfg.color, lineWidth: 1, lineStyle: 0,
+//         priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+//         visible: false,
+//       })
+//     })
+
+//     const bbUpper = mainChart.addSeries(LineSeries, {
+//       color: '#26a69a', lineWidth: 1, lineStyle: 2,
+//       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+//       visible: false,
+//     })
+//     const bbMiddle = mainChart.addSeries(LineSeries, {
+//       color: '#26a69a66', lineWidth: 1, lineStyle: 2,
+//       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+//       visible: false,
+//     })
+//     const bbLower = mainChart.addSeries(LineSeries, {
+//       color: '#26a69a', lineWidth: 1, lineStyle: 2,
+//       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+//       visible: false,
+//     })
+
+//     const rsiChart = createChart(rsiContainerRef.current, {
+//       autoSize: true,
+//       layout: { ...baseLayout, fontSize: 10 },
+//       grid: baseGrid,
+//       crosshair: subCrosshair,
+//       rightPriceScale: { borderColor: '#1a1d26', textColor: '#848e9c', scaleMargins: { top: 0.1, bottom: 0.1 } },
+//       timeScale: { visible: false },
+//       handleScroll: false, handleScale: false,
+//     })
+
+//     const rsiLine = rsiChart.addSeries(LineSeries, {
+//       color: '#9c27b0', lineWidth: 1.5,
+//       priceLineVisible: false, lastValueVisible: true,
+//     })
+//     rsiLine.createPriceLine({ price: 70, color: '#f6465d88', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'OB' })
+//     rsiLine.createPriceLine({ price: 30, color: '#0ecb8188', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'OS' })
+
+//     const macdChart = createChart(macdContainerRef.current, {
+//       autoSize: true,
+//       layout: { ...baseLayout, fontSize: 10 },
+//       grid: baseGrid,
+//       crosshair: subCrosshair,
+//       rightPriceScale: { borderColor: '#1a1d26', textColor: '#848e9c', scaleMargins: { top: 0.1, bottom: 0.1 } },
+//       timeScale: { visible: false },
+//       handleScroll: false, handleScale: false,
+//     })
+
+//     const macdHist = macdChart.addSeries(HistogramSeries, {
+//       priceFormat: { type: 'price', precision: 6, minMove: 0.000001 },
+//       lastValueVisible: false,
+//     })
+//     const macdLine = macdChart.addSeries(LineSeries, {
+//       color: '#2196f3', lineWidth: 1.5,
+//       priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: true,
+//     })
+//     const macdSignal = macdChart.addSeries(LineSeries, {
+//       color: '#ff9800', lineWidth: 1,
+//       priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: true,
+//     })
+//     macdLine.createPriceLine({ price: 0, color: '#4c525e', lineWidth: 1, lineStyle: 1, axisLabelVisible: false })
+
+//     mainChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+//       if (!range) return
+//       rsiChart.timeScale().setVisibleLogicalRange(range)
+//       macdChart.timeScale().setVisibleLogicalRange(range)
+
+//       // ── Infinite scroll backward: khi scroll đến gần đầu chart (from < 10 nến) ──
+//       if (range.from < 10 && loadMoreRef.current && !isLoadingBanner.current) {
+//         isLoadingBanner.current = true
+//         setIsLoadingOlder(true)
+//         loadMoreRef.current().finally(() => {
+//           isLoadingBanner.current = false
+//           setIsLoadingOlder(false)
+//         })
+//       }
+//     })
+
+//     const onMain = throttle((param) => {
+//       if (!param.time || !param.point) { setTooltip(null); return }
+//       const bar = param.seriesData?.get(candles)
+//       const vol = param.seriesData?.get(volume)
+//       if (!bar) { setTooltip(null); return }
+//       const maValues = {}
+//       MA_CONFIGS.forEach(cfg => {
+//         const v = param.seriesData?.get(maSeriesMap[cfg.period])
+//         if (v) maValues[cfg.period] = v.value
+//       })
+//       const emaValues = {}
+//       EMA_CONFIGS.forEach(cfg => {
+//         const v = param.seriesData?.get(emaSeriesMap[cfg.period])
+//         if (v) emaValues[cfg.period] = v.value
+//       })
+//       const bbU = param.seriesData?.get(bbUpper)
+//       const bbM = param.seriesData?.get(bbMiddle)
+//       const bbL = param.seriesData?.get(bbLower)
+//       const bbValues = (bbU && bbM && bbL) ? { upper: bbU.value, middle: bbM.value, lower: bbL.value } : null
+//       setTooltip({ open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: vol?.value ?? 0, isUp: bar.close >= bar.open, maValues, emaValues, bbValues })
+//     }, 16)
+
+//     const onMacd = throttle((param) => {
+//       if (!param.time || !param.point) { setMacdTooltip(null); return }
+//       const m = param.seriesData?.get(macdLine)
+//       const s = param.seriesData?.get(macdSignal)
+//       const h = param.seriesData?.get(macdHist)
+//       if (!m) { setMacdTooltip(null); return }
+//       setMacdTooltip({ macd: m?.value, signal: s?.value, hist: h?.value })
+//     }, 16)
+
+//     mainChart.subscribeCrosshairMove(onMain)
+//     macdChart.subscribeCrosshairMove(onMacd)
+
+//     mainChartRef.current   = mainChart
+//     rsiChartRef.current    = rsiChart
+//     macdChartRef.current   = macdChart
+//     candleRef.current      = candles
+//     volumeRef.current      = volume
+//     maRefs.current         = maSeriesMap
+//     emaRefs.current        = emaSeriesMap
+//     rsiLineRef.current     = rsiLine
+//     macdLineRef.current    = macdLine
+//     macdSignalRef.current  = macdSignal
+//     macdHistRef.current    = macdHist
+//     bbUpperRef.current     = bbUpper
+//     bbMiddleRef.current    = bbMiddle
+//     bbLowerRef.current     = bbLower
+
+//     // ── Wire pixelToPrice từ priceScale của mainChart ──
+//     // Canvas overlay absolute top:0 left:0 trên container cha.
+//     // lightweight-charts vẽ chart pane bên trong container — cùng origin nên Y giống nhau.
+//     // Tuy nhiên mainChart.priceScale('right').coordinateToPrice(y) nhận y tính từ
+//     // phần trên của chart pane (không bao gồm topbar của lw-charts).
+//     // Dùng getBoundingClientRect để tính offset chính xác.
+//     pixelToPriceRef.current = (canvasY) => {
+//       try {
+//         const canvas   = canvasOverlayRef.current
+//         const chartDiv = mainContainerRef.current
+//         if (!canvas || !chartDiv) return null
+//         // Tìm phần tử <canvas> bên trong lightweight-charts (chart pane thực sự)
+//         const lwCanvas = chartDiv.querySelector('canvas')
+//         if (lwCanvas) {
+//           const lwRect     = lwCanvas.getBoundingClientRect()
+//           const canvasRect = canvas.getBoundingClientRect()
+//           // y tương đối so với lw-chart canvas
+//           const yInChart = canvasY - (lwRect.top - canvasRect.top)
+//           return mainChart.priceScale('right').coordinateToPrice(yInChart)
+//         }
+//         return mainChart.priceScale('right').coordinateToPrice(canvasY)
+//       } catch {
+//         return null
+//       }
+//     }
+
+//     // ── Wire pixelToTime từ timeScale của mainChart ──
+//     // coordinateToTime trả về Unix timestamp (số giây) — lightweight-charts dùng UTC.
+//     pixelToTimeRef2.current = (canvasX) => {
+//       try {
+//         const canvas   = canvasOverlayRef.current
+//         const chartDiv = mainContainerRef.current
+//         if (!canvas || !chartDiv) return null
+//         const lwCanvas = chartDiv.querySelector('canvas')
+//         let xInChart = canvasX
+//         if (lwCanvas) {
+//           const lwRect     = lwCanvas.getBoundingClientRect()
+//           const canvasRect = canvas.getBoundingClientRect()
+//           xInChart = canvasX - (lwRect.left - canvasRect.left)
+//         }
+//         const ts = mainChart.timeScale().coordinateToTime(xInChart)
+//         if (ts == null) return null
+//         // lightweight-charts trả về seconds epoch (UTC) hoặc 'yyyy-mm-dd' string
+//         if (typeof ts === 'number') return new Date(ts * 1000)  // ms UTC
+//         if (typeof ts === 'string') return new Date(ts)          // parse ISO date
+//         return null
+//       } catch {
+//         return null
+//       }
+//     }
+
+//     return () => {
+//       mainChart.remove(); rsiChart.remove(); macdChart.remove()
+//       mainChartRef.current = rsiChartRef.current = macdChartRef.current = null
+//       candleRef.current = volumeRef.current = null
+//       maRefs.current = {}
+//       emaRefs.current = {}
+//       emaStateRef.current = {}
+//       rsiLineRef.current = macdLineRef.current = macdSignalRef.current = macdHistRef.current = null
+//       bbUpperRef.current = bbMiddleRef.current = bbLowerRef.current = null
+//       pixelToPriceRef.current = null
+//       pixelToTimeRef2.current = null
+//     }
+//   }, [])
+
+//   // ── Toggle MA ──────────────────────────────────────────────────────────────
+//   useEffect(() => {
+//     MA_CONFIGS.forEach(cfg => maRefs.current[cfg.period]?.applyOptions({ visible: showMA[cfg.period] }))
+//   }, [showMA])
+
+//   // ── Toggle EMA ─────────────────────────────────────────────────────────────
+//   useEffect(() => {
+//     EMA_CONFIGS.forEach(cfg => {
+//       emaRefs.current[cfg.period]?.applyOptions({ visible: showEMA[cfg.period] })
+//     })
+//     EMA_CONFIGS.forEach(cfg => {
+//       if (showEMA[cfg.period] && klineDataRef.current.length >= cfg.period) {
+//         const { series } = calcEMALine(klineDataRef.current, cfg.period)
+//         emaRefs.current[cfg.period]?.setData(series)
+//       }
+//     })
+//   }, [showEMA])
+
+//   // ── Toggle Volume ──────────────────────────────────────────────────────────
+//   useEffect(() => {
+//     volumeRef.current?.applyOptions({ visible: showVolume })
+//   }, [showVolume])
+
+//   // ── Toggle BB ─────────────────────────────────────────────────────────────
+//   useEffect(() => {
+//     bbUpperRef.current?.applyOptions({ visible: showBB })
+//     bbMiddleRef.current?.applyOptions({ visible: showBB })
+//     bbLowerRef.current?.applyOptions({ visible: showBB })
+//     if (showBB && klineDataRef.current.length >= BB_PERIOD) {
+//       const { upper, middle, lower } = calcBB(klineDataRef.current)
+//       bbUpperRef.current?.setData(upper)
+//       bbMiddleRef.current?.setData(middle)
+//       bbLowerRef.current?.setData(lower)
+//     }
+//   }, [showBB])
+
+//   // ── Resize main chart khi panels thay đổi ─────────────────────────────────
+//   useEffect(() => {
+//     const bottom = (showRSI ? 0.18 : 0) + (showMACD ? 0.18 : 0)
+//     mainChartRef.current?.applyOptions({
+//       rightPriceScale: { scaleMargins: { top: 0.08, bottom: Math.max(bottom, 0.08) } },
+//     })
+//     setTimeout(() => mainChartRef.current?.timeScale().fitContent(), 50)
+//   }, [showRSI, showMACD])
+
+//   // ── onData: full calc sau khi REST load ───────────────────────────────────
+//   const onKlineData = useCallback((data) => {
+//     klineDataRef.current = [...data]
+
+//     if (data.length > 0) {
+//       const samplePrice = data[data.length - 1].close
+//       const fmt = getPriceFormat(samplePrice)
+//       candleRef.current?.applyOptions({ priceFormat: fmt })
+//       MA_CONFIGS.forEach(cfg => maRefs.current[cfg.period]?.applyOptions({ priceFormat: fmt }))
+//       EMA_CONFIGS.forEach(cfg => emaRefs.current[cfg.period]?.applyOptions({ priceFormat: fmt }))
+//       bbUpperRef.current?.applyOptions({ priceFormat: fmt })
+//       bbMiddleRef.current?.applyOptions({ priceFormat: fmt })
+//       bbLowerRef.current?.applyOptions({ priceFormat: fmt })
+//     }
+
+//     MA_CONFIGS.forEach(cfg => maRefs.current[cfg.period]?.setData(calcMA(data, cfg.period)))
+
+//     EMA_CONFIGS.forEach(cfg => {
+//       if (data.length < cfg.period) return
+//       const { series, lastEMA } = calcEMALine(data, cfg.period)
+//       emaRefs.current[cfg.period]?.setData(series)
+//       emaStateRef.current[cfg.period] = lastEMA
+//     })
+
+//     if (bbUpperRef.current && data.length >= BB_PERIOD) {
+//       const { upper, middle, lower } = calcBB(data)
+//       bbUpperRef.current.setData(upper)
+//       bbMiddleRef.current.setData(middle)
+//       bbLowerRef.current.setData(lower)
+//     }
+
+//     const { values: rsiVals, state: rsiState } = calcRSIFull(data, RSI_PERIOD)
+//     if (rsiVals.length > 0) {
+//       rsiLineRef.current?.setData(rsiVals)
+//       rsiStateRef.current = rsiState
+//     }
+
+//     const { macdLine, signalLine, histogram, state: macdState } = calcMACDFull(data, MACD_FAST, MACD_SLOW, MACD_SIGNAL)
+//     if (macdLine.length > 0) {
+//       macdLineRef.current?.setData(macdLine)
+//       macdSignalRef.current?.setData(signalLine)
+//       macdHistRef.current?.setData(histogram)
+//       macdStateRef.current = macdState
+//     }
+//   }, [])
+
+//   // ── onUpdate: O(1) per tick ───────────────────────────────────────────────
+//   const onKlineUpdate = useCallback((candle) => {
+//     const data = klineDataRef.current
+//     if (!data.length) return
+
+//     const last = data[data.length - 1]
+//     const isNew = last.time !== candle.time
+//     if (isNew) data.push({ ...candle })
+//     else data[data.length - 1] = { ...last, ...candle }
+
+//     MA_CONFIGS.forEach(cfg => {
+//       const s = maRefs.current[cfg.period]
+//       if (!s || data.length < cfg.period) return
+//       const sum = data.slice(-cfg.period).reduce((a, x) => a + x.close, 0)
+//       s.update({ time: candle.time, value: sum / cfg.period })
+//     })
+
+//     EMA_CONFIGS.forEach(cfg => {
+//       const s = emaRefs.current[cfg.period]
+//       if (!s) return
+//       const lastEMA = emaStateRef.current[cfg.period]
+//       if (lastEMA == null) return
+//       const k = 2 / (cfg.period + 1)
+//       const newEMA = candle.close * k + lastEMA * (1 - k)
+//       s.update({ time: candle.time, value: newEMA })
+//       if (isNew) emaStateRef.current[cfg.period] = newEMA
+//     })
+
+//     if (data.length >= BB_PERIOD) {
+//       const bb = calcBBIncr(data)
+//       if (bb) {
+//         bbUpperRef.current?.update({ time: bb.time, value: bb.upper })
+//         bbMiddleRef.current?.update({ time: bb.time, value: bb.avg })
+//         bbLowerRef.current?.update({ time: bb.time, value: bb.lower })
+//       }
+//     }
+
+//     if (rsiStateRef.current && data.length >= 2) {
+//       const prev = data[data.length - 2]
+//       const diff = candle.close - prev.close
+//       let { avgGain: g, avgLoss: l } = rsiStateRef.current
+//       const newG = (g * (RSI_PERIOD - 1) + Math.max(diff, 0)) / RSI_PERIOD
+//       const newL = (l * (RSI_PERIOD - 1) + Math.max(-diff, 0)) / RSI_PERIOD
+//       const val  = newL === 0 ? 100 : 100 - 100 / (1 + newG / newL)
+//       rsiLineRef.current?.update({ time: candle.time, value: val })
+//       if (isNew) rsiStateRef.current = { avgGain: newG, avgLoss: newL }
+//     }
+
+//     const ms = macdStateRef.current
+//     if (ms && ms.lastEmaFast != null) {
+//       const newFast   = candle.close * ms.kFast + ms.lastEmaFast * (1 - ms.kFast)
+//       const newSlow   = candle.close * ms.kSlow + ms.lastEmaSlow * (1 - ms.kSlow)
+//       const newMacd   = newFast - newSlow
+//       const newSignal = newMacd * ms.kSig + ms.lastSignal * (1 - ms.kSig)
+//       const newHist   = newMacd - newSignal
+
+//       macdLineRef.current?.update({ time: candle.time, value: newMacd })
+//       macdSignalRef.current?.update({ time: candle.time, value: newSignal })
+//       macdHistRef.current?.update({ time: candle.time, value: newHist, color: newHist >= 0 ? '#0ecb8188' : '#f6465d88' })
+
+//       if (isNew) {
+//         macdStateRef.current = { ...ms, lastEmaFast: newFast, lastEmaSlow: newSlow, lastSignal: newSignal }
+//       }
+//     }
+//   }, [])
+
+//   // ── onPrepend: nhận nến cũ hơn từ useKlineData, merge vào klineDataRef + setData ──
+//   const onKlinePrepend = useCallback((olderData) => {
+//     if (!olderData || olderData.length === 0) return
+
+//     const existing = klineDataRef.current
+//     // Merge: older trước, existing sau, loại trùng time
+//     const merged = [...olderData]
+//     const oldestExisting = existing.length > 0 ? existing[0].time : Infinity
+//     for (const d of existing) {
+//       if (d.time > olderData[olderData.length - 1].time) merged.push(d)
+//     }
+//     // Sắp xếp lại theo time tăng dần (Binance thường đã sorted)
+//     merged.sort((a, b) => a.time - b.time)
+//     klineDataRef.current = merged
+
+//     // setData toàn bộ lên chart (lightweight-charts hỗ trợ prepend qua setData)
+//     candleRef.current?.setData(merged)
+//     if (volumeRef.current) {
+//       volumeRef.current.setData(merged.map(d => ({
+//         time:  d.time,
+//         value: d.volume,
+//         color: d.close >= d.open ? '#0ecb8155' : '#f6465d55',
+//       })))
+//     }
+
+//     // Recalc toàn bộ indicators trên data mới
+//     MA_CONFIGS.forEach(cfg => maRefs.current[cfg.period]?.setData(calcMA(merged, cfg.period)))
+//     EMA_CONFIGS.forEach(cfg => {
+//       if (merged.length < cfg.period) return
+//       const { series, lastEMA } = calcEMALine(merged, cfg.period)
+//       emaRefs.current[cfg.period]?.setData(series)
+//       emaStateRef.current[cfg.period] = lastEMA
+//     })
+//     if (merged.length >= BB_PERIOD) {
+//       const { upper, middle, lower } = calcBB(merged)
+//       bbUpperRef.current?.setData(upper)
+//       bbMiddleRef.current?.setData(middle)
+//       bbLowerRef.current?.setData(lower)
+//     }
+//     const { values: rsiVals, state: rsiState } = calcRSIFull(merged, RSI_PERIOD)
+//     if (rsiVals.length > 0) { rsiLineRef.current?.setData(rsiVals); rsiStateRef.current = rsiState }
+//     const { macdLine, signalLine, histogram, state: macdState } = calcMACDFull(merged, MACD_FAST, MACD_SLOW, MACD_SIGNAL)
+//     if (macdLine.length > 0) {
+//       macdLineRef.current?.setData(macdLine)
+//       macdSignalRef.current?.setData(signalLine)
+//       macdHistRef.current?.setData(histogram)
+//       macdStateRef.current = macdState
+//     }
+//   }, [])
+
+//   useKlineData(candleRef, volumeRef, symbol, interval, market, onKlineData, onKlineUpdate, onKlinePrepend, loadMoreRef)
+
+//   const activePanels   = (showRSI ? 1 : 0) + (showMACD ? 1 : 0)
+//   const panelHeightPct = activePanels === 1 ? 22 : 18
+
+//   // ─────────────────────────────────────────────────────────────────────────
+//   // JSX: thêm DrawingToolbar bên trái + canvas overlay trên chart chính
+//   // ─────────────────────────────────────────────────────────────────────────
+//   return (
+//     // Outer: flex ngang — DrawingToolbar | chart area
+//     <div className={`flex h-full bg-[#0b0e11] overflow-hidden ${isDragging ? 'chart-grabbing' : ''}`}>
+
+//       {/* ── Drawing Toolbar (dọc bên trái) ── */}
+//       <DrawingToolbar
+//         activeTool={activeTool}
+//         onToolChange={setActiveTool}
+//         onAction={handleAction}
+//         drawingColor={drawingColor}
+//         onColorChange={setDrawingColor}
+//         lineWidth={lineWidth}
+//         onLineWidthChange={setLineWidth}
+//         lineStyle={lineStyle}
+//         onLineStyleChange={setLineStyle}
+//         hiddenAll={hiddenAll}
+//         lockedAll={lockedAll}
+//         drawingCount={drawingCount}
+//         keepDrawing={keepDrawing}
+//         onKeepDrawingChange={setKeepDrawing}
+//         magnetMode={magnetMode}
+//         onMagnetModeChange={setMagnetMode}
+//       />
+
+//       {/* ── Chart area (flex-col như cũ) ── */}
+//       <div className="flex flex-col flex-1 min-w-0 h-full relative">
+
+//         {/* ── Toolbar row ── */}
+//         <div className="flex items-center gap-1 px-3 py-1.5 border-b border-[#1a1d26] flex-shrink-0 bg-[#0b0e11] flex-wrap">
+
+//           <div className="flex items-center gap-0.5">
+//             {ALL_INTERVALS.filter(i => PINNED.includes(i.value)).map(i => (
+//               <button key={i.value} onClick={() => setInterval(i.value)}
+//                 className={`px-2.5 py-1 text-xs rounded transition-all ${
+//                   interval === i.value ? 'bg-[#f0b90b1a] text-[#f0b90b] font-medium' : 'text-[#848e9c] hover:text-white hover:bg-[#1e2329]'
+//                 }`}>
+//                 {i.label}
+//               </button>
+//             ))}
+//           </div>
+
+//           <div className="w-px h-4 bg-[#2b3139] mx-1" />
+
+//           <button onClick={() => setShowPicker(p => !p)}
+//             className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded transition-all ${
+//               !isPinned ? 'bg-[#f0b90b1a] text-[#f0b90b] font-medium' : 'text-[#848e9c] hover:text-white hover:bg-[#1e2329]'
+//             }`}>
+//             {!isPinned ? currentLabel : 'Thêm'}
+//             <svg width="10" height="10" viewBox="0 0 10 10">
+//               <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round"/>
+//             </svg>
+//           </button>
+
+//           <div className="w-px h-4 bg-[#2b3139] mx-1" />
+
+//           <div className="flex items-center gap-1 flex-wrap">
+//             {MA_CONFIGS.map(cfg => (
+//               <button key={cfg.period}
+//                 onClick={() => setShowMA({ ...showMA, [cfg.period]: !showMA[cfg.period] })}
+//                 className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showMA[cfg.period] ? 'border-transparent font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'}`}
+//                 style={showMA[cfg.period] ? { color: cfg.color, background: cfg.color + '1a', borderColor: cfg.color + '44' } : {}}>
+//                 {cfg.label}
+//               </button>
+//             ))}
+
+//             {EMA_CONFIGS.map(cfg => (
+//               <button key={cfg.period}
+//                 onClick={() => setShowEMA({ ...showEMA, [cfg.period]: !showEMA[cfg.period] })}
+//                 className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showEMA[cfg.period] ? 'border-transparent font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'}`}
+//                 style={showEMA[cfg.period] ? { color: cfg.color, background: cfg.color + '1a', borderColor: cfg.color + '44' } : {}}>
+//                 {cfg.label}
+//               </button>
+//             ))}
+
+//             <button onClick={() => setShowBB(!showBB)}
+//               className={`px-2 py-0.5 text-[10px] rounded border transition-all ${
+//                 showBB ? 'bg-[#26a69a1a] text-[#26a69a] border-[#26a69a44] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+//               }`}>
+//               BB(20,2)
+//             </button>
+
+//             <button onClick={() => setShowRSI(!showRSI)}
+//               className={`px-2 py-0.5 text-[10px] rounded border transition-all ${
+//                 showRSI ? 'bg-[#9c27b01a] text-[#ce93d8] border-[#9c27b044] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+//               }`}>
+//               RSI{RSI_PERIOD}
+//             </button>
+
+//             <button onClick={() => setShowMACD(!showMACD)}
+//               className={`px-2 py-0.5 text-[10px] rounded border transition-all ${
+//                 showMACD ? 'bg-[#2196f31a] text-[#64b5f6] border-[#2196f344] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+//               }`}>
+//               MACD
+//             </button>
+
+//             <button onClick={() => setShowVolume(!showVolume)}
+//               className={`px-2 py-0.5 text-[10px] rounded border transition-all ${
+//                 showVolume ? 'bg-[#4c525e1a] text-[#848e9c] border-[#4c525e44]' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+//               }`}>
+//               VOL
+//             </button>
+//           </div>
+
+//           <div className="ml-auto">
+//             <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${
+//               market === 'futures' ? 'bg-[#f0b90b1a] text-[#f0b90b]' : 'bg-[#0ecb811a] text-[#0ecb81]'
+//             }`}>
+//               {market === 'futures' ? 'FUTURES' : 'SPOT'}
+//             </span>
+//           </div>
+//         </div>
+
+//         {/* ── Interval picker dropdown ── */}
+//         {showPicker && (
+//           <>
+//             <div className="fixed inset-0 z-10" onClick={() => setShowPicker(false)} />
+//             <div className="absolute top-10 left-3 z-20 bg-[#1e2329] border border-[#2b3139] rounded-lg shadow-2xl p-4 w-72">
+//               {INTERVAL_GROUPS.map(group => (
+//                 <div key={group.label} className="mb-3 last:mb-0">
+//                   <p className="text-[10px] text-[#5e6673] uppercase tracking-wider mb-2 font-medium">{group.label}</p>
+//                   <div className="flex flex-wrap gap-1.5">
+//                     {group.items.map(i => (
+//                       <button key={i.value}
+//                         onClick={() => { setInterval(i.value); setShowPicker(false) }}
+//                         className={`px-3 py-1.5 text-xs rounded transition-all ${
+//                           interval === i.value ? 'bg-[#f0b90b] text-black font-semibold' : 'bg-[#2b3139] text-[#848e9c] hover:bg-[#363c45] hover:text-white'
+//                         }`}>
+//                         {i.label}
+//                       </button>
+//                     ))}
+//                   </div>
+//                 </div>
+//               ))}
+//             </div>
+//           </>
+//         )}
+
+//         {/* ── OHLCV Tooltip ── */}
+//         {tooltip && (
+//           <div className="absolute top-10 left-3 z-10 pointer-events-none">
+//             <div className="flex items-center gap-3 bg-[#1e2329cc] backdrop-blur-sm px-3 py-1.5 rounded text-[11px] border border-[#2b3139] flex-wrap">
+//               <span className={tooltip.isUp ? 'text-[#0ecb81]' : 'text-[#f6465d]'}>O <span className="text-[#eaecef]">{fmtPrice(tooltip.open)}</span></span>
+//               <span className="text-[#0ecb81]">H <span className="text-[#eaecef]">{fmtPrice(tooltip.high)}</span></span>
+//               <span className="text-[#f6465d]">L <span className="text-[#eaecef]">{fmtPrice(tooltip.low)}</span></span>
+//               <span className={tooltip.isUp ? 'text-[#0ecb81]' : 'text-[#f6465d]'}>C <span className="text-[#eaecef]">{fmtPrice(tooltip.close)}</span></span>
+//               <span className="text-[#5e6673]">V <span className="text-[#848e9c]">{fmtVol(tooltip.volume)}</span></span>
+//               {MA_CONFIGS.map(cfg =>
+//                 showMA[cfg.period] && tooltip.maValues?.[cfg.period] ? (
+//                   <span key={cfg.period} style={{ color: cfg.color }}>
+//                     {cfg.label} <span className="text-[#eaecef]">{fmtPrice(tooltip.maValues[cfg.period])}</span>
+//                   </span>
+//                 ) : null
+//               )}
+//               {EMA_CONFIGS.map(cfg =>
+//                 showEMA[cfg.period] && tooltip.emaValues?.[cfg.period] ? (
+//                   <span key={cfg.period} style={{ color: cfg.color }}>
+//                     {cfg.label} <span className="text-[#eaecef]">{fmtPrice(tooltip.emaValues[cfg.period])}</span>
+//                   </span>
+//                 ) : null
+//               )}
+//               {showBB && tooltip.bbValues && (
+//                 <>
+//                   <span className="text-[#26a69a]">BB↑ <span className="text-[#eaecef]">{fmtPrice(tooltip.bbValues.upper)}</span></span>
+//                   <span className="text-[#26a69a66]">BB— <span className="text-[#eaecef]">{fmtPrice(tooltip.bbValues.middle)}</span></span>
+//                   <span className="text-[#26a69a]">BB↓ <span className="text-[#eaecef]">{fmtPrice(tooltip.bbValues.lower)}</span></span>
+//                 </>
+//               )}
+//             </div>
+//           </div>
+//         )}
+
+//         {/* ── Main chart + Canvas overlay ─────────────────────────────────── */}
+//         {/*
+//           Container này cần position: relative để canvas absolute hoạt động.
+//           Canvas overlay nằm trên chart, nhận pointer-events khi đang vẽ.
+//         */}
+//         <div
+//           className="relative w-full"
+//           style={{ flex: '1 1 0', minHeight: 0 }}
+//         >
+//           {/* ── Loading older candles banner ── */}
+//           {isLoadingOlder && (
+//             <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+//               <div className="flex items-center gap-2 bg-[#1e2329dd] backdrop-blur-sm border border-[#2b3139] rounded-full px-3 py-1.5 shadow-lg">
+//                 <svg className="animate-spin w-3 h-3 text-[#f0b90b]" viewBox="0 0 24 24" fill="none">
+//                   <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25"/>
+//                   <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+//                 </svg>
+//                 <span className="text-[10px] text-[#848e9c]">Đang tải nến cũ hơn...</span>
+//               </div>
+//             </div>
+//           )}
+
+//           {/* Canvas overlay cho drawing tools — PHẢI ở trước mainContainerRef */}
+//           <canvas
+//             ref={canvasOverlayRef}
+//             {...canvasProps}
+//           />
+
+//           {/* Main lightweight-chart */}
+//           <div
+//             ref={mainContainerRef}
+//             className="w-full h-full"
+//             style={{
+//               cursor: isDrawingMode
+//                 ? 'none'              // Canvas overlay tự handle cursor khi vẽ
+//                 : isDragging ? 'grabbing' : 'crosshair',
+//             }}
+//             onMouseDown={() => { if (!isDrawingMode) setIsDragging(true) }}
+//             onMouseUp={() => setIsDragging(false)}
+//             onMouseLeave={() => setIsDragging(false)}
+//           />
+//         </div>
+
+//         {/* ── RSI panel ── */}
+//         <div
+//           className="flex-shrink-0 border-t border-[#1a1d26] overflow-hidden transition-all duration-200"
+//           style={{ height: showRSI ? `${panelHeightPct}%` : '0', minHeight: showRSI ? 70 : 0 }}
+//         >
+//           <div className="flex items-center gap-2 px-3 py-0.5 bg-[#0b0e11]">
+//             <span className="text-[9px] text-[#9c27b0] font-medium">RSI({RSI_PERIOD})</span>
+//             <span className="text-[9px] text-[#f6465d66]">— OB 70</span>
+//             <span className="text-[9px] text-[#0ecb8166]">— OS 30</span>
+//           </div>
+//           <div
+//             ref={rsiContainerRef}
+//             className="w-full"
+//             style={{
+//               height: 'calc(100% - 20px)',
+//               cursor: isDragging ? 'grabbing' : 'crosshair',
+//             }}
+//             onMouseDown={() => setIsDragging(true)}
+//             onMouseUp={() => setIsDragging(false)}
+//             onMouseLeave={() => setIsDragging(false)}
+//           />
+//         </div>
+
+//         {/* ── MACD panel ── */}
+//         <div
+//           className="flex-shrink-0 border-t border-[#1a1d26] overflow-hidden transition-all duration-200"
+//           style={{ height: showMACD ? `${panelHeightPct}%` : '0', minHeight: showMACD ? 70 : 0 }}
+//         >
+//           <div className="flex items-center gap-3 px-3 py-0.5 bg-[#0b0e11]">
+//             <span className="text-[9px] text-[#64b5f6] font-medium">MACD({MACD_FAST},{MACD_SLOW},{MACD_SIGNAL})</span>
+//             <span className="text-[9px] text-[#2196f3]">— MACD</span>
+//             <span className="text-[9px] text-[#ff9800]">— Signal</span>
+//             <span className="text-[9px] text-[#848e9c]">█ Hist</span>
+//             {macdTooltip && (
+//               <span className="ml-1 flex items-center gap-2">
+//                 <span className="text-[9px] text-[#2196f3]">M <span className="text-[#eaecef]">{fmtMacd(macdTooltip.macd)}</span></span>
+//                 <span className="text-[9px] text-[#ff9800]">S <span className="text-[#eaecef]">{fmtMacd(macdTooltip.signal)}</span></span>
+//                 <span className={`text-[9px] ${(macdTooltip.hist ?? 0) >= 0 ? 'text-[#0ecb81]' : 'text-[#f6465d]'}`}>
+//                   H <span className="text-[#eaecef]">{fmtMacd(macdTooltip.hist)}</span>
+//                 </span>
+//               </span>
+//             )}
+//           </div>
+//           <div
+//             ref={macdContainerRef}
+//             className="w-full"
+//             style={{
+//               height: 'calc(100% - 20px)',
+//               cursor: isDragging ? 'grabbing' : 'crosshair',
+//             }}
+//             onMouseDown={() => setIsDragging(true)}
+//             onMouseUp={() => setIsDragging(false)}
+//             onMouseLeave={() => setIsDragging(false)}
+//           />
+//         </div>
+
+//       </div>
+//     </div>
+//   )
+// }
+
+// import { useEffect, useRef, useState, useCallback } from 'react'
+// import { createChart, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts'
+// import { useChartStore } from '../store/chartStore'
+// import { useKlineData } from '../hooks/useKlineData'
+// import DrawingToolbar from './DrawingToolbar'
+// import { useDrawingTools } from '../hooks/useDrawingTools'
+
+// // ── Interval groups ──────────────────────────────────────────────────────────
+// const INTERVAL_GROUPS = [
+//   {
+//     label: 'Phút',
+//     items: [
+//       { label: '1m',  value: '1m' },
+//       { label: '3m',  value: '3m' },
+//       { label: '5m',  value: '5m' },
+//       { label: '15m', value: '15m' },
+//       { label: '30m', value: '30m' },
+//     ],
+//   },
+//   {
+//     label: 'Giờ',
+//     items: [
+//       { label: '1h',  value: '1h' },
+//       { label: '2h',  value: '2h' },
+//       { label: '4h',  value: '4h' },
+//       { label: '6h',  value: '6h' },
+//       { label: '8h',  value: '8h' },
+//       { label: '12h', value: '12h' },
+//     ],
+//   },
+//   {
+//     label: 'Ngày / Tuần / Tháng',
+//     items: [
+//       { label: '1D', value: '1d' },
+//       { label: '3D', value: '3d' },
+//       { label: '1W', value: '1w' },
+//       { label: '1M', value: '1M' },
+//     ],
+//   },
+// ]
+
+// const ALL_INTERVALS = INTERVAL_GROUPS.flatMap(g => g.items)
+// const PINNED = ['15m', '1h', '4h', '1d', '1w']
+
+// const MA_CONFIGS = [
+//   { period: 20,  color: '#f0b90b', label: 'MA20' },
+//   { period: 50,  color: '#2196f3', label: 'MA50' },
+//   { period: 200, color: '#e91e63', label: 'MA200' },
+// ]
+
+// const EMA_CONFIGS = [
+//   { period: 9,  color: '#ff6b35', label: 'EMA9' },
+//   { period: 21, color: '#a855f7', label: 'EMA21' },
+// ]
+
+// const RSI_PERIOD  = 14
+// const MACD_FAST   = 12
+// const MACD_SLOW   = 26
+// const MACD_SIGNAL = 9
+// const BB_PERIOD   = 20
+// const BB_MULT     = 2
+
+// // ── Helpers ──────────────────────────────────────────────────────────────────
+
+// function calcMA(data, period) {
+//   const result = []
+//   let sum = 0
+//   for (let i = 0; i < data.length; i++) {
+//     sum += data[i].close
+//     if (i >= period) sum -= data[i - period].close
+//     if (i >= period - 1) result.push({ time: data[i].time, value: sum / period })
+//   }
+//   return result
+// }
+
+// function calcEMALine(data, period) {
+//   if (data.length < period) return { series: [], lastEMA: null }
+//   const k = 2 / (period + 1)
+//   let ema = 0
+//   for (let i = 0; i < period; i++) ema += data[i].close
+//   ema /= period
+//   const series = [{ time: data[period - 1].time, value: ema }]
+//   for (let i = period; i < data.length; i++) {
+//     ema = data[i].close * k + ema * (1 - k)
+//     series.push({ time: data[i].time, value: ema })
+//   }
+//   return { series, lastEMA: ema }
+// }
+
+// function calcBB(data, period = BB_PERIOD, mult = BB_MULT) {
+//   const upper = [], middle = [], lower = []
+//   let sum = 0
+//   const win = []
+//   for (let i = 0; i < data.length; i++) {
+//     const c = data[i].close
+//     win.push(c); sum += c
+//     if (win.length > period) sum -= win.shift()
+//     if (win.length === period) {
+//       const avg = sum / period
+//       let sq = 0
+//       for (let j = 0; j < win.length; j++) sq += (win[j] - avg) ** 2
+//       const sd = Math.sqrt(sq / period)
+//       middle.push({ time: data[i].time, value: avg })
+//       upper.push({  time: data[i].time, value: avg + mult * sd })
+//       lower.push({  time: data[i].time, value: avg - mult * sd })
+//     }
+//   }
+//   return { upper, middle, lower }
+// }
+
+// function calcBBIncr(data, period = BB_PERIOD, mult = BB_MULT) {
+//   if (data.length < period) return null
+//   const win = data.slice(-period)
+//   const avg = win.reduce((s, d) => s + d.close, 0) / period
+//   let sq = 0
+//   for (let i = 0; i < win.length; i++) sq += (win[i].close - avg) ** 2
+//   const sd = Math.sqrt(sq / period)
+//   return { time: data[data.length - 1].time, avg, upper: avg + mult * sd, lower: avg - mult * sd }
+// }
+
+// function calcRSIFull(data, period = 14) {
+//   if (data.length < period + 1) return { values: [], state: null }
+//   const values = []
+//   let avgGain = 0, avgLoss = 0
+//   for (let i = 1; i <= period; i++) {
+//     const d = data[i].close - data[i - 1].close
+//     if (d > 0) avgGain += d; else avgLoss += Math.abs(d)
+//   }
+//   avgGain /= period; avgLoss /= period
+//   values.push({ time: data[period].time, value: avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss) })
+//   for (let i = period + 1; i < data.length; i++) {
+//     const d = data[i].close - data[i - 1].close
+//     avgGain = (avgGain * (period - 1) + Math.max(d, 0)) / period
+//     avgLoss = (avgLoss * (period - 1) + Math.max(-d, 0)) / period
+//     values.push({ time: data[i].time, value: avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss) })
+//   }
+//   return { values, state: { avgGain, avgLoss } }
+// }
+
+// function calcEMAFull(closes, period) {
+//   if (closes.length < period) return { values: [], lastEMA: null }
+//   const k = 2 / (period + 1)
+//   let ema = closes.slice(0, period).reduce((s, v) => s + v, 0) / period
+//   const values = [ema]
+//   for (let i = period; i < closes.length; i++) {
+//     ema = closes[i] * k + ema * (1 - k)
+//     values.push(ema)
+//   }
+//   return { values, lastEMA: ema }
+// }
+
+// function calcMACDFull(data, fast = 12, slow = 26, signal = 9) {
+//   if (data.length < slow + signal) {
+//     return { macdLine: [], signalLine: [], histogram: [], state: null }
+//   }
+//   const closes = data.map(d => d.close)
+//   const kFast  = 2 / (fast + 1)
+//   const kSlow  = 2 / (slow + 1)
+//   const kSig   = 2 / (signal + 1)
+//   const { values: emaFastAll, lastEMA: lastFast } = calcEMAFull(closes, fast)
+//   const { values: emaSlowAll, lastEMA: lastSlow } = calcEMAFull(closes, slow)
+//   const offset = slow - fast
+//   const macdRaw = emaSlowAll.map((sv, i) => sv != null ? emaFastAll[i + offset] - sv : null).filter(v => v != null)
+//   if (macdRaw.length < signal) {
+//     return { macdLine: [], signalLine: [], histogram: [], state: null }
+//   }
+//   const { values: signalAll, lastEMA: lastSignalEMA } = calcEMAFull(macdRaw, signal)
+//   const macdLine = [], signalLine = [], histogram = []
+//   signalAll.forEach((sv, i) => {
+//     const dataIdx = slow - 1 + i + (signal - 1)
+//     if (dataIdx >= data.length) return
+//     const mv = macdRaw[i + signal - 1]
+//     if (mv == null) return
+//     const hv = mv - sv
+//     macdLine.push({ time: data[dataIdx].time, value: mv })
+//     signalLine.push({ time: data[dataIdx].time, value: sv })
+//     histogram.push({ time: data[dataIdx].time, value: hv, color: hv >= 0 ? '#0ecb8188' : '#f6465d88' })
+//   })
+//   const lastMacd = macdLine.length ? macdLine[macdLine.length - 1].value : 0
+//   return {
+//     macdLine, signalLine, histogram,
+//     state: {
+//       lastEmaFast: lastFast,
+//       lastEmaSlow: lastSlow,
+//       lastSignal:  lastSignalEMA ?? lastMacd,
+//       kFast, kSlow, kSig,
+//     },
+//   }
+// }
+
+// function fmtPrice(p) {
+//   if (p == null || !isFinite(p)) return '---'
+//   if (p >= 10000)  return p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+//   if (p >= 1000)   return p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+//   if (p >= 100)    return p.toFixed(3)
+//   if (p >= 10)     return p.toFixed(4)
+//   if (p >= 1)      return p.toFixed(4)
+//   if (p >= 0.1)    return p.toFixed(5)
+//   if (p >= 0.01)   return p.toFixed(6)
+//   if (p >= 0.001)  return p.toFixed(7)
+//   if (p >= 0.0001) return p.toFixed(8)
+//   return p.toFixed(10)
+// }
+
+// function fmtMacd(v) {
+//   if (v == null || !isFinite(v)) return '---'
+//   const a = Math.abs(v)
+//   return a >= 0.0001 ? v.toFixed(4) : v.toExponential(2)
+// }
+
+// function fmtVol(n) {
+//   if (!isFinite(n) || n <= 0) return '---'
+//   if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B'
+//   if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'
+//   if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K'
+//   return n.toFixed(2)
+// }
+
+// function getPriceFormat(price) {
+//   if (!price || !isFinite(price) || price <= 0) {
+//     return { type: 'price', precision: 8, minMove: 0.00000001 }
+//   }
+//   if (price >= 10000)  return { type: 'price', precision: 2,  minMove: 0.01       }
+//   if (price >= 1000)   return { type: 'price', precision: 2,  minMove: 0.01       }
+//   if (price >= 100)    return { type: 'price', precision: 3,  minMove: 0.001      }
+//   if (price >= 10)     return { type: 'price', precision: 4,  minMove: 0.0001     }
+//   if (price >= 1)      return { type: 'price', precision: 4,  minMove: 0.0001     }
+//   if (price >= 0.1)    return { type: 'price', precision: 5,  minMove: 0.00001    }
+//   if (price >= 0.01)   return { type: 'price', precision: 6,  minMove: 0.000001   }
+//   if (price >= 0.001)  return { type: 'price', precision: 7,  minMove: 0.0000001  }
+//   if (price >= 0.0001) return { type: 'price', precision: 8,  minMove: 0.00000001 }
+//   return               { type: 'price', precision: 10, minMove: 0.0000000001 }
+// }
+
+// function throttle(fn, ms) {
+//   let last = 0, timer = null
+//   return function (...args) {
+//     const now = Date.now()
+//     const remaining = ms - (now - last)
+//     if (remaining <= 0) {
+//       if (timer) { clearTimeout(timer); timer = null }
+//       last = now
+//       fn.apply(this, args)
+//     } else {
+//       clearTimeout(timer)
+//       timer = setTimeout(() => {
+//         last = Date.now(); timer = null
+//         fn.apply(this, args)
+//       }, remaining)
+//     }
+//   }
+// }
+
+// // ── Component ────────────────────────────────────────────────────────────────
+// export default function ChartPanel() {
+//   const mainContainerRef = useRef(null)
+//   const rsiContainerRef  = useRef(null)
+//   const macdContainerRef = useRef(null)
+
+//   // ── Canvas overlay ref cho drawing tools ──
+//   const canvasOverlayRef = useRef(null)
+
+//   const mainChartRef  = useRef(null)
+//   const rsiChartRef   = useRef(null)
+//   const macdChartRef  = useRef(null)
+//   const candleRef     = useRef(null)
+//   const volumeRef     = useRef(null)
+//   const maRefs        = useRef({})
+//   const emaRefs       = useRef({})
+//   const emaStateRef   = useRef({})
+//   const rsiLineRef    = useRef(null)
+//   const macdLineRef   = useRef(null)
+//   const macdSignalRef = useRef(null)
+//   const macdHistRef   = useRef(null)
+//   const bbUpperRef    = useRef(null)
+//   const bbMiddleRef   = useRef(null)
+//   const bbLowerRef    = useRef(null)
+
+//   const klineDataRef  = useRef([])
+//   const rsiStateRef   = useRef(null)
+//   const macdStateRef  = useRef(null)
+//   const loadMoreRef     = useRef(null)   // fn được useKlineData gán — gọi để load nến cũ hơn
+//   const isLoadingBanner = useRef(false)  // tránh hiện banner loading nhiều lần
+
+//   const [showPicker,  setShowPicker]  = useState(false)
+//   const [tooltip,     setTooltip]     = useState(null)
+//   const [macdTooltip, setMacdTooltip] = useState(null)
+//   const [isDragging,      setIsDragging]      = useState(false)
+//   const [isLoadingOlder, setIsLoadingOlder] = useState(false)  // hiện spinner khi load nến cũ
+
+//   // ── Drawing tool state ────────────────────────────────────────────────────
+//   const [activeTool,   setActiveTool]   = useState('cursor')
+//   const [drawingColor, setDrawingColor] = useState('#2962ff')
+//   const [lineWidth,    setLineWidth]    = useState(1)
+//   const [lineStyle,    setLineStyle]    = useState('solid')
+//   const [keepDrawing,  setKeepDrawing]  = useState(false)
+//   const [magnetMode,   setMagnetMode]   = useState('none')  // 'none' | 'weak' | 'strong'
+
+//   // pixelToPrice: chuyển canvas Y coordinate → giá
+//   const pixelToPriceRef = useRef(null)
+//   const pixelToPrice = useCallback((y) => pixelToPriceRef.current?.(y) ?? null, [])
+
+//   // pixelToTime: chuyển canvas X coordinate → Date (cho crosshair label trục X)
+//   const pixelToTimeRef2 = useRef(null)
+//   const pixelToTime = useCallback((x) => pixelToTimeRef2.current?.(x) ?? null, [])
+
+//   const {
+//     symbol, interval, market, setInterval,
+//     showMA, setShowMA,
+//     showEMA, setShowEMA,
+//     showRSI, setShowRSI,
+//     showVolume, setShowVolume,
+//     showMACD, setShowMACD,
+//     showBB, setShowBB,
+//   } = useChartStore()
+
+//   // ── Drawing tools hook ────────────────────────────────────────────────────
+//   const {
+//     drawingCount,
+//     hiddenAll,
+//     lockedAll,
+//     handleAction,
+//     canvasProps,
+//   } = useDrawingTools({
+//     canvasRef:    canvasOverlayRef,
+//     activeTool,
+//     drawingColor,
+//     lineWidth,
+//     lineStyle,
+//     onToolChange: setActiveTool,
+//     keepDrawing,
+//     magnetMode,
+//     pixelToPrice,
+//     pixelToTime,
+//   })
+
+//   const currentLabel = ALL_INTERVALS.find(i => i.value === interval)?.label ?? interval
+//   const isPinned = PINNED.includes(interval)
+
+//   // Khi đang ở drawing mode → disable isDragging để tránh conflict
+//   const isDrawingMode = activeTool !== 'cursor' && activeTool !== 'cross'
+
+//   // ── Tạo tất cả charts một lần ────────────────────────────────────────────
+//   useEffect(() => {
+//     if (!mainContainerRef.current || !rsiContainerRef.current || !macdContainerRef.current) return
+
+//     const baseLayout = {
+//       background: { color: '#0b0e11' },
+//       textColor: '#848e9c',
+//       fontFamily: 'Inter, system-ui, sans-serif',
+//       attributionLogo: false,
+//     }
+//     const baseGrid = {
+//       vertLines: { color: '#1a1d26', style: 1 },
+//       horzLines: { color: '#1a1d26', style: 1 },
+//     }
+//     const subCrosshair = {
+//       mode: 1,
+//       vertLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139' },
+//       horzLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139', labelVisible: true },
+//     }
+
+//     const mainChart = createChart(mainContainerRef.current, {
+//       autoSize: true,
+//       layout: { ...baseLayout, fontSize: 11 },
+//       grid: baseGrid,
+//       crosshair: {
+//         mode: 0,
+//         vertLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139' },
+//         horzLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139' },
+//       },
+//       rightPriceScale: {
+//         borderColor: '#1a1d26',
+//         scaleMargins: { top: 0.08, bottom: 0.22 },
+//         textColor: '#848e9c',
+//       },
+//       timeScale: {
+//         borderColor: '#1a1d26',
+//         timeVisible: true,
+//         secondsVisible: false,
+//         barSpacing: 6,
+//         minBarSpacing: 0.5,
+//         maxBarSpacing: 20,
+//         rightOffset: 12,
+//         lockVisibleTimeRangeOnResize: true,
+//       },
+//     })
+
+//     const candles = mainChart.addSeries(CandlestickSeries, {
+//       upColor: '#0ecb81', downColor: '#f6465d',
+//       borderUpColor: '#0ecb81', borderDownColor: '#f6465d',
+//       wickUpColor: '#0ecb81', wickDownColor: '#f6465d',
+//       thinBars: true,
+//       candleBodyMaxWidth: 8,
+//       candleWickMaxWidth: 1,
+//     })
+
+//     const volume = mainChart.addSeries(HistogramSeries, {
+//       priceFormat: { type: 'volume' },
+//       priceScaleId: 'vol',
+//     })
+//     mainChart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
+
+//     const maSeriesMap = {}
+//     MA_CONFIGS.forEach(cfg => {
+//       maSeriesMap[cfg.period] = mainChart.addSeries(LineSeries, {
+//         color: cfg.color, lineWidth: 1,
+//         priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+//         visible: cfg.period !== 200,
+//       })
+//     })
+
+//     const emaSeriesMap = {}
+//     EMA_CONFIGS.forEach(cfg => {
+//       emaSeriesMap[cfg.period] = mainChart.addSeries(LineSeries, {
+//         color: cfg.color, lineWidth: 1, lineStyle: 0,
+//         priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+//         visible: false,
+//       })
+//     })
+
+//     const bbUpper = mainChart.addSeries(LineSeries, {
+//       color: '#26a69a', lineWidth: 1, lineStyle: 2,
+//       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+//       visible: false,
+//     })
+//     const bbMiddle = mainChart.addSeries(LineSeries, {
+//       color: '#26a69a66', lineWidth: 1, lineStyle: 2,
+//       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+//       visible: false,
+//     })
+//     const bbLower = mainChart.addSeries(LineSeries, {
+//       color: '#26a69a', lineWidth: 1, lineStyle: 2,
+//       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+//       visible: false,
+//     })
+
+//     const rsiChart = createChart(rsiContainerRef.current, {
+//       autoSize: true,
+//       layout: { ...baseLayout, fontSize: 10 },
+//       grid: baseGrid,
+//       crosshair: subCrosshair,
+//       rightPriceScale: { borderColor: '#1a1d26', textColor: '#848e9c', scaleMargins: { top: 0.1, bottom: 0.1 } },
+//       timeScale: { visible: false },
+//       handleScroll: false, handleScale: false,
+//     })
+
+//     const rsiLine = rsiChart.addSeries(LineSeries, {
+//       color: '#9c27b0', lineWidth: 1.5,
+//       priceLineVisible: false, lastValueVisible: true,
+//     })
+//     rsiLine.createPriceLine({ price: 70, color: '#f6465d88', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'OB' })
+//     rsiLine.createPriceLine({ price: 30, color: '#0ecb8188', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'OS' })
+
+//     const macdChart = createChart(macdContainerRef.current, {
+//       autoSize: true,
+//       layout: { ...baseLayout, fontSize: 10 },
+//       grid: baseGrid,
+//       crosshair: subCrosshair,
+//       rightPriceScale: { borderColor: '#1a1d26', textColor: '#848e9c', scaleMargins: { top: 0.1, bottom: 0.1 } },
+//       timeScale: { visible: false },
+//       handleScroll: false, handleScale: false,
+//     })
+
+//     const macdHist = macdChart.addSeries(HistogramSeries, {
+//       priceFormat: { type: 'price', precision: 6, minMove: 0.000001 },
+//       lastValueVisible: false,
+//     })
+//     const macdLine = macdChart.addSeries(LineSeries, {
+//       color: '#2196f3', lineWidth: 1.5,
+//       priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: true,
+//     })
+//     const macdSignal = macdChart.addSeries(LineSeries, {
+//       color: '#ff9800', lineWidth: 1,
+//       priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: true,
+//     })
+//     macdLine.createPriceLine({ price: 0, color: '#4c525e', lineWidth: 1, lineStyle: 1, axisLabelVisible: false })
+
+//     mainChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+//       if (!range) return
+//       rsiChart.timeScale().setVisibleLogicalRange(range)
+//       macdChart.timeScale().setVisibleLogicalRange(range)
+
+//       // ── Infinite scroll backward: khi scroll đến gần đầu chart (from < 10 nến) ──
+//       if (range.from < 10 && loadMoreRef.current && !isLoadingBanner.current) {
+//         isLoadingBanner.current = true
+//         setIsLoadingOlder(true)
+//         loadMoreRef.current().finally(() => {
+//           isLoadingBanner.current = false
+//           setIsLoadingOlder(false)
+//         })
+//       }
+//     })
+
+//     const onMain = throttle((param) => {
+//       if (!param.time || !param.point) { setTooltip(null); return }
+//       const bar = param.seriesData?.get(candles)
+//       const vol = param.seriesData?.get(volume)
+//       if (!bar) { setTooltip(null); return }
+//       const maValues = {}
+//       MA_CONFIGS.forEach(cfg => {
+//         const v = param.seriesData?.get(maSeriesMap[cfg.period])
+//         if (v) maValues[cfg.period] = v.value
+//       })
+//       const emaValues = {}
+//       EMA_CONFIGS.forEach(cfg => {
+//         const v = param.seriesData?.get(emaSeriesMap[cfg.period])
+//         if (v) emaValues[cfg.period] = v.value
+//       })
+//       const bbU = param.seriesData?.get(bbUpper)
+//       const bbM = param.seriesData?.get(bbMiddle)
+//       const bbL = param.seriesData?.get(bbLower)
+//       const bbValues = (bbU && bbM && bbL) ? { upper: bbU.value, middle: bbM.value, lower: bbL.value } : null
+//       setTooltip({ open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: vol?.value ?? 0, isUp: bar.close >= bar.open, maValues, emaValues, bbValues })
+//     }, 16)
+
+//     const onMacd = throttle((param) => {
+//       if (!param.time || !param.point) { setMacdTooltip(null); return }
+//       const m = param.seriesData?.get(macdLine)
+//       const s = param.seriesData?.get(macdSignal)
+//       const h = param.seriesData?.get(macdHist)
+//       if (!m) { setMacdTooltip(null); return }
+//       setMacdTooltip({ macd: m?.value, signal: s?.value, hist: h?.value })
+//     }, 16)
+
+//     mainChart.subscribeCrosshairMove(onMain)
+//     macdChart.subscribeCrosshairMove(onMacd)
+
+//     mainChartRef.current   = mainChart
+//     rsiChartRef.current    = rsiChart
+//     macdChartRef.current   = macdChart
+//     candleRef.current      = candles
+//     volumeRef.current      = volume
+//     maRefs.current         = maSeriesMap
+//     emaRefs.current        = emaSeriesMap
+//     rsiLineRef.current     = rsiLine
+//     macdLineRef.current    = macdLine
+//     macdSignalRef.current  = macdSignal
+//     macdHistRef.current    = macdHist
+//     bbUpperRef.current     = bbUpper
+//     bbMiddleRef.current    = bbMiddle
+//     bbLowerRef.current     = bbLower
+
+//     // ── Wire pixelToPrice từ priceScale của mainChart ──
+//     // Canvas overlay absolute top:0 left:0 trên container cha.
+//     // lightweight-charts vẽ chart pane bên trong container — cùng origin nên Y giống nhau.
+//     // Tuy nhiên mainChart.priceScale('right').coordinateToPrice(y) nhận y tính từ
+//     // phần trên của chart pane (không bao gồm topbar của lw-charts).
+//     // Dùng getBoundingClientRect để tính offset chính xác.
+//     pixelToPriceRef.current = (canvasY) => {
+//       try {
+//         const canvas   = canvasOverlayRef.current
+//         const chartDiv = mainContainerRef.current
+//         if (!canvas || !chartDiv) return null
+//         // Tìm phần tử <canvas> bên trong lightweight-charts (chart pane thực sự)
+//         const lwCanvas = chartDiv.querySelector('canvas')
+//         if (lwCanvas) {
+//           const lwRect     = lwCanvas.getBoundingClientRect()
+//           const canvasRect = canvas.getBoundingClientRect()
+//           // y tương đối so với lw-chart canvas
+//           const yInChart = canvasY - (lwRect.top - canvasRect.top)
+//           return mainChart.priceScale('right').coordinateToPrice(yInChart)
+//         }
+//         return mainChart.priceScale('right').coordinateToPrice(canvasY)
+//       } catch {
+//         return null
+//       }
+//     }
+
+//     // ── Wire pixelToTime từ timeScale của mainChart ──
+//     // coordinateToTime trả về Unix timestamp (số giây) — lightweight-charts dùng UTC.
+//     pixelToTimeRef2.current = (canvasX) => {
+//       try {
+//         const canvas   = canvasOverlayRef.current
+//         const chartDiv = mainContainerRef.current
+//         if (!canvas || !chartDiv) return null
+//         const lwCanvas = chartDiv.querySelector('canvas')
+//         let xInChart = canvasX
+//         if (lwCanvas) {
+//           const lwRect     = lwCanvas.getBoundingClientRect()
+//           const canvasRect = canvas.getBoundingClientRect()
+//           xInChart = canvasX - (lwRect.left - canvasRect.left)
+//         }
+//         const ts = mainChart.timeScale().coordinateToTime(xInChart)
+//         if (ts == null) return null
+//         // lightweight-charts trả về seconds epoch (UTC) hoặc 'yyyy-mm-dd' string
+//         if (typeof ts === 'number') return new Date(ts * 1000)  // ms UTC
+//         if (typeof ts === 'string') return new Date(ts)          // parse ISO date
+//         return null
+//       } catch {
+//         return null
+//       }
+//     }
+
+//     return () => {
+//       mainChart.remove(); rsiChart.remove(); macdChart.remove()
+//       mainChartRef.current = rsiChartRef.current = macdChartRef.current = null
+//       candleRef.current = volumeRef.current = null
+//       maRefs.current = {}
+//       emaRefs.current = {}
+//       emaStateRef.current = {}
+//       rsiLineRef.current = macdLineRef.current = macdSignalRef.current = macdHistRef.current = null
+//       bbUpperRef.current = bbMiddleRef.current = bbLowerRef.current = null
+//       pixelToPriceRef.current = null
+//       pixelToTimeRef2.current = null
+//     }
+//   }, [])
+
+//   // ── Toggle MA ──────────────────────────────────────────────────────────────
+//   useEffect(() => {
+//     MA_CONFIGS.forEach(cfg => maRefs.current[cfg.period]?.applyOptions({ visible: showMA[cfg.period] }))
+//   }, [showMA])
+
+//   // ── Toggle EMA ─────────────────────────────────────────────────────────────
+//   useEffect(() => {
+//     EMA_CONFIGS.forEach(cfg => {
+//       emaRefs.current[cfg.period]?.applyOptions({ visible: showEMA[cfg.period] })
+//     })
+//     EMA_CONFIGS.forEach(cfg => {
+//       if (showEMA[cfg.period] && klineDataRef.current.length >= cfg.period) {
+//         const { series } = calcEMALine(klineDataRef.current, cfg.period)
+//         emaRefs.current[cfg.period]?.setData(series)
+//       }
+//     })
+//   }, [showEMA])
+
+//   // ── Toggle Volume ──────────────────────────────────────────────────────────
+//   useEffect(() => {
+//     volumeRef.current?.applyOptions({ visible: showVolume })
+//   }, [showVolume])
+
+//   // ── Toggle BB ─────────────────────────────────────────────────────────────
+//   useEffect(() => {
+//     bbUpperRef.current?.applyOptions({ visible: showBB })
+//     bbMiddleRef.current?.applyOptions({ visible: showBB })
+//     bbLowerRef.current?.applyOptions({ visible: showBB })
+//     if (showBB && klineDataRef.current.length >= BB_PERIOD) {
+//       const { upper, middle, lower } = calcBB(klineDataRef.current)
+//       bbUpperRef.current?.setData(upper)
+//       bbMiddleRef.current?.setData(middle)
+//       bbLowerRef.current?.setData(lower)
+//     }
+//   }, [showBB])
+
+//   // ── Resize main chart khi panels thay đổi ─────────────────────────────────
+//   useEffect(() => {
+//     const bottom = (showRSI ? 0.18 : 0) + (showMACD ? 0.18 : 0)
+//     mainChartRef.current?.applyOptions({
+//       rightPriceScale: { scaleMargins: { top: 0.08, bottom: Math.max(bottom, 0.08) } },
+//     })
+//     setTimeout(() => mainChartRef.current?.timeScale().fitContent(), 50)
+//   }, [showRSI, showMACD])
+
+//   // ── onData: full calc sau khi REST load ───────────────────────────────────
+//   const onKlineData = useCallback((data) => {
+//     klineDataRef.current = [...data]
+
+//     if (data.length > 0) {
+//       const samplePrice = data[data.length - 1].close
+//       const fmt = getPriceFormat(samplePrice)
+//       candleRef.current?.applyOptions({ priceFormat: fmt })
+//       MA_CONFIGS.forEach(cfg => maRefs.current[cfg.period]?.applyOptions({ priceFormat: fmt }))
+//       EMA_CONFIGS.forEach(cfg => emaRefs.current[cfg.period]?.applyOptions({ priceFormat: fmt }))
+//       bbUpperRef.current?.applyOptions({ priceFormat: fmt })
+//       bbMiddleRef.current?.applyOptions({ priceFormat: fmt })
+//       bbLowerRef.current?.applyOptions({ priceFormat: fmt })
+//     }
+
+//     MA_CONFIGS.forEach(cfg => maRefs.current[cfg.period]?.setData(calcMA(data, cfg.period)))
+
+//     EMA_CONFIGS.forEach(cfg => {
+//       if (data.length < cfg.period) return
+//       const { series, lastEMA } = calcEMALine(data, cfg.period)
+//       emaRefs.current[cfg.period]?.setData(series)
+//       emaStateRef.current[cfg.period] = lastEMA
+//     })
+
+//     if (bbUpperRef.current && data.length >= BB_PERIOD) {
+//       const { upper, middle, lower } = calcBB(data)
+//       bbUpperRef.current.setData(upper)
+//       bbMiddleRef.current.setData(middle)
+//       bbLowerRef.current.setData(lower)
+//     }
+
+//     const { values: rsiVals, state: rsiState } = calcRSIFull(data, RSI_PERIOD)
+//     if (rsiVals.length > 0) {
+//       rsiLineRef.current?.setData(rsiVals)
+//       rsiStateRef.current = rsiState
+//     }
+
+//     const { macdLine, signalLine, histogram, state: macdState } = calcMACDFull(data, MACD_FAST, MACD_SLOW, MACD_SIGNAL)
+//     if (macdLine.length > 0) {
+//       macdLineRef.current?.setData(macdLine)
+//       macdSignalRef.current?.setData(signalLine)
+//       macdHistRef.current?.setData(histogram)
+//       macdStateRef.current = macdState
+//     }
+//   }, [])
+
+//   // ── onUpdate: O(1) per tick ───────────────────────────────────────────────
+//   const onKlineUpdate = useCallback((candle) => {
+//     const data = klineDataRef.current
+//     if (!data.length) return
+
+//     const last = data[data.length - 1]
+//     const isNew = last.time !== candle.time
+//     if (isNew) data.push({ ...candle })
+//     else data[data.length - 1] = { ...last, ...candle }
+
+//     MA_CONFIGS.forEach(cfg => {
+//       const s = maRefs.current[cfg.period]
+//       if (!s || data.length < cfg.period) return
+//       const sum = data.slice(-cfg.period).reduce((a, x) => a + x.close, 0)
+//       s.update({ time: candle.time, value: sum / cfg.period })
+//     })
+
+//     EMA_CONFIGS.forEach(cfg => {
+//       const s = emaRefs.current[cfg.period]
+//       if (!s) return
+//       const lastEMA = emaStateRef.current[cfg.period]
+//       if (lastEMA == null) return
+//       const k = 2 / (cfg.period + 1)
+//       const newEMA = candle.close * k + lastEMA * (1 - k)
+//       s.update({ time: candle.time, value: newEMA })
+//       if (isNew) emaStateRef.current[cfg.period] = newEMA
+//     })
+
+//     if (data.length >= BB_PERIOD) {
+//       const bb = calcBBIncr(data)
+//       if (bb) {
+//         bbUpperRef.current?.update({ time: bb.time, value: bb.upper })
+//         bbMiddleRef.current?.update({ time: bb.time, value: bb.avg })
+//         bbLowerRef.current?.update({ time: bb.time, value: bb.lower })
+//       }
+//     }
+
+//     if (rsiStateRef.current && data.length >= 2) {
+//       const prev = data[data.length - 2]
+//       const diff = candle.close - prev.close
+//       let { avgGain: g, avgLoss: l } = rsiStateRef.current
+//       const newG = (g * (RSI_PERIOD - 1) + Math.max(diff, 0)) / RSI_PERIOD
+//       const newL = (l * (RSI_PERIOD - 1) + Math.max(-diff, 0)) / RSI_PERIOD
+//       const val  = newL === 0 ? 100 : 100 - 100 / (1 + newG / newL)
+//       rsiLineRef.current?.update({ time: candle.time, value: val })
+//       if (isNew) rsiStateRef.current = { avgGain: newG, avgLoss: newL }
+//     }
+
+//     const ms = macdStateRef.current
+//     if (ms && ms.lastEmaFast != null) {
+//       const newFast   = candle.close * ms.kFast + ms.lastEmaFast * (1 - ms.kFast)
+//       const newSlow   = candle.close * ms.kSlow + ms.lastEmaSlow * (1 - ms.kSlow)
+//       const newMacd   = newFast - newSlow
+//       const newSignal = newMacd * ms.kSig + ms.lastSignal * (1 - ms.kSig)
+//       const newHist   = newMacd - newSignal
+
+//       macdLineRef.current?.update({ time: candle.time, value: newMacd })
+//       macdSignalRef.current?.update({ time: candle.time, value: newSignal })
+//       macdHistRef.current?.update({ time: candle.time, value: newHist, color: newHist >= 0 ? '#0ecb8188' : '#f6465d88' })
+
+//       if (isNew) {
+//         macdStateRef.current = { ...ms, lastEmaFast: newFast, lastEmaSlow: newSlow, lastSignal: newSignal }
+//       }
+//     }
+//   }, [])
+
+//   // ── onPrepend: nhận nến cũ hơn từ useKlineData, merge vào klineDataRef + setData ──
+//   const onKlinePrepend = useCallback((olderData) => {
+//     if (!olderData || olderData.length === 0) return
+
+//     const existing = klineDataRef.current
+//     // Merge: older trước, existing sau, loại trùng time
+//     const merged = [...olderData]
+//     const oldestExisting = existing.length > 0 ? existing[0].time : Infinity
+//     for (const d of existing) {
+//       if (d.time > olderData[olderData.length - 1].time) merged.push(d)
+//     }
+//     // Sắp xếp lại theo time tăng dần (Binance thường đã sorted)
+//     merged.sort((a, b) => a.time - b.time)
+//     klineDataRef.current = merged
+
+//     // setData toàn bộ lên chart (lightweight-charts hỗ trợ prepend qua setData)
+//     candleRef.current?.setData(merged)
+//     if (volumeRef.current) {
+//       volumeRef.current.setData(merged.map(d => ({
+//         time:  d.time,
+//         value: d.volume,
+//         color: d.close >= d.open ? '#0ecb8155' : '#f6465d55',
+//       })))
+//     }
+
+//     // Recalc toàn bộ indicators trên data mới
+//     MA_CONFIGS.forEach(cfg => maRefs.current[cfg.period]?.setData(calcMA(merged, cfg.period)))
+//     EMA_CONFIGS.forEach(cfg => {
+//       if (merged.length < cfg.period) return
+//       const { series, lastEMA } = calcEMALine(merged, cfg.period)
+//       emaRefs.current[cfg.period]?.setData(series)
+//       emaStateRef.current[cfg.period] = lastEMA
+//     })
+//     if (merged.length >= BB_PERIOD) {
+//       const { upper, middle, lower } = calcBB(merged)
+//       bbUpperRef.current?.setData(upper)
+//       bbMiddleRef.current?.setData(middle)
+//       bbLowerRef.current?.setData(lower)
+//     }
+//     const { values: rsiVals, state: rsiState } = calcRSIFull(merged, RSI_PERIOD)
+//     if (rsiVals.length > 0) { rsiLineRef.current?.setData(rsiVals); rsiStateRef.current = rsiState }
+//     const { macdLine, signalLine, histogram, state: macdState } = calcMACDFull(merged, MACD_FAST, MACD_SLOW, MACD_SIGNAL)
+//     if (macdLine.length > 0) {
+//       macdLineRef.current?.setData(macdLine)
+//       macdSignalRef.current?.setData(signalLine)
+//       macdHistRef.current?.setData(histogram)
+//       macdStateRef.current = macdState
+//     }
+//   }, [])
+
+//   useKlineData(candleRef, volumeRef, symbol, interval, market, onKlineData, onKlineUpdate, onKlinePrepend, loadMoreRef)
+
+//   const activePanels   = (showRSI ? 1 : 0) + (showMACD ? 1 : 0)
+//   const panelHeightPct = activePanels === 1 ? 22 : 18
+
+//   // ─────────────────────────────────────────────────────────────────────────
+//   // JSX: thêm DrawingToolbar bên trái + canvas overlay trên chart chính
+//   // ─────────────────────────────────────────────────────────────────────────
+//   return (
+//     // Outer: flex ngang — DrawingToolbar | chart area
+//     <div className={`flex h-full bg-[#0b0e11] overflow-hidden ${isDragging ? 'chart-grabbing' : ''}`}>
+
+//       {/* ── Drawing Toolbar (dọc bên trái) ── */}
+//       <DrawingToolbar
+//         activeTool={activeTool}
+//         onToolChange={setActiveTool}
+//         onAction={handleAction}
+//         drawingColor={drawingColor}
+//         onColorChange={setDrawingColor}
+//         lineWidth={lineWidth}
+//         onLineWidthChange={setLineWidth}
+//         lineStyle={lineStyle}
+//         onLineStyleChange={setLineStyle}
+//         hiddenAll={hiddenAll}
+//         lockedAll={lockedAll}
+//         drawingCount={drawingCount}
+//         keepDrawing={keepDrawing}
+//         onKeepDrawingChange={setKeepDrawing}
+//         magnetMode={magnetMode}
+//         onMagnetModeChange={setMagnetMode}
+//       />
+
+//       {/* ── Chart area (flex-col như cũ) ── */}
+//       <div className="flex flex-col flex-1 min-w-0 h-full relative">
+
+//         {/* ── Toolbar row ── */}
+//         <div className="flex items-center gap-1 px-3 py-1.5 border-b border-[#1a1d26] flex-shrink-0 bg-[#0b0e11] flex-wrap">
+
+//           <div className="flex items-center gap-0.5">
+//             {ALL_INTERVALS.filter(i => PINNED.includes(i.value)).map(i => (
+//               <button key={i.value} onClick={() => setInterval(i.value)}
+//                 className={`px-2.5 py-1 text-xs rounded transition-all ${
+//                   interval === i.value ? 'bg-[#f0b90b1a] text-[#f0b90b] font-medium' : 'text-[#848e9c] hover:text-white hover:bg-[#1e2329]'
+//                 }`}>
+//                 {i.label}
+//               </button>
+//             ))}
+//           </div>
+
+//           <div className="w-px h-4 bg-[#2b3139] mx-1" />
+
+//           <button onClick={() => setShowPicker(p => !p)}
+//             className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded transition-all ${
+//               !isPinned ? 'bg-[#f0b90b1a] text-[#f0b90b] font-medium' : 'text-[#848e9c] hover:text-white hover:bg-[#1e2329]'
+//             }`}>
+//             {!isPinned ? currentLabel : 'Thêm'}
+//             <svg width="10" height="10" viewBox="0 0 10 10">
+//               <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round"/>
+//             </svg>
+//           </button>
+
+//           <div className="w-px h-4 bg-[#2b3139] mx-1" />
+
+//           <div className="flex items-center gap-1 flex-wrap">
+//             {MA_CONFIGS.map(cfg => (
+//               <button key={cfg.period}
+//                 onClick={() => setShowMA({ ...showMA, [cfg.period]: !showMA[cfg.period] })}
+//                 className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showMA[cfg.period] ? 'border-transparent font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'}`}
+//                 style={showMA[cfg.period] ? { color: cfg.color, background: cfg.color + '1a', borderColor: cfg.color + '44' } : {}}>
+//                 {cfg.label}
+//               </button>
+//             ))}
+
+//             {EMA_CONFIGS.map(cfg => (
+//               <button key={cfg.period}
+//                 onClick={() => setShowEMA({ ...showEMA, [cfg.period]: !showEMA[cfg.period] })}
+//                 className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showEMA[cfg.period] ? 'border-transparent font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'}`}
+//                 style={showEMA[cfg.period] ? { color: cfg.color, background: cfg.color + '1a', borderColor: cfg.color + '44' } : {}}>
+//                 {cfg.label}
+//               </button>
+//             ))}
+
+//             <button onClick={() => setShowBB(!showBB)}
+//               className={`px-2 py-0.5 text-[10px] rounded border transition-all ${
+//                 showBB ? 'bg-[#26a69a1a] text-[#26a69a] border-[#26a69a44] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+//               }`}>
+//               BB(20,2)
+//             </button>
+
+//             <button onClick={() => setShowRSI(!showRSI)}
+//               className={`px-2 py-0.5 text-[10px] rounded border transition-all ${
+//                 showRSI ? 'bg-[#9c27b01a] text-[#ce93d8] border-[#9c27b044] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+//               }`}>
+//               RSI{RSI_PERIOD}
+//             </button>
+
+//             <button onClick={() => setShowMACD(!showMACD)}
+//               className={`px-2 py-0.5 text-[10px] rounded border transition-all ${
+//                 showMACD ? 'bg-[#2196f31a] text-[#64b5f6] border-[#2196f344] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+//               }`}>
+//               MACD
+//             </button>
+
+//             <button onClick={() => setShowVolume(!showVolume)}
+//               className={`px-2 py-0.5 text-[10px] rounded border transition-all ${
+//                 showVolume ? 'bg-[#4c525e1a] text-[#848e9c] border-[#4c525e44]' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+//               }`}>
+//               VOL
+//             </button>
+//           </div>
+
+//           <div className="ml-auto">
+//             <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${
+//               market === 'futures' ? 'bg-[#f0b90b1a] text-[#f0b90b]' : 'bg-[#0ecb811a] text-[#0ecb81]'
+//             }`}>
+//               {market === 'futures' ? 'FUTURES' : 'SPOT'}
+//             </span>
+//           </div>
+//         </div>
+
+//         {/* ── Interval picker dropdown ── */}
+//         {showPicker && (
+//           <>
+//             <div className="fixed inset-0 z-10" onClick={() => setShowPicker(false)} />
+//             <div className="absolute top-10 left-3 z-20 bg-[#1e2329] border border-[#2b3139] rounded-lg shadow-2xl p-4 w-72">
+//               {INTERVAL_GROUPS.map(group => (
+//                 <div key={group.label} className="mb-3 last:mb-0">
+//                   <p className="text-[10px] text-[#5e6673] uppercase tracking-wider mb-2 font-medium">{group.label}</p>
+//                   <div className="flex flex-wrap gap-1.5">
+//                     {group.items.map(i => (
+//                       <button key={i.value}
+//                         onClick={() => { setInterval(i.value); setShowPicker(false) }}
+//                         className={`px-3 py-1.5 text-xs rounded transition-all ${
+//                           interval === i.value ? 'bg-[#f0b90b] text-black font-semibold' : 'bg-[#2b3139] text-[#848e9c] hover:bg-[#363c45] hover:text-white'
+//                         }`}>
+//                         {i.label}
+//                       </button>
+//                     ))}
+//                   </div>
+//                 </div>
+//               ))}
+//             </div>
+//           </>
+//         )}
+
+//         {/* ── OHLCV Tooltip ── */}
+//         {tooltip && (
+//           <div className="absolute top-10 left-3 z-10 pointer-events-none">
+//             <div className="flex items-center gap-3 bg-[#1e2329cc] backdrop-blur-sm px-3 py-1.5 rounded text-[11px] border border-[#2b3139] flex-wrap">
+//               <span className={tooltip.isUp ? 'text-[#0ecb81]' : 'text-[#f6465d]'}>O <span className="text-[#eaecef]">{fmtPrice(tooltip.open)}</span></span>
+//               <span className="text-[#0ecb81]">H <span className="text-[#eaecef]">{fmtPrice(tooltip.high)}</span></span>
+//               <span className="text-[#f6465d]">L <span className="text-[#eaecef]">{fmtPrice(tooltip.low)}</span></span>
+//               <span className={tooltip.isUp ? 'text-[#0ecb81]' : 'text-[#f6465d]'}>C <span className="text-[#eaecef]">{fmtPrice(tooltip.close)}</span></span>
+//               <span className="text-[#5e6673]">V <span className="text-[#848e9c]">{fmtVol(tooltip.volume)}</span></span>
+//               {MA_CONFIGS.map(cfg =>
+//                 showMA[cfg.period] && tooltip.maValues?.[cfg.period] ? (
+//                   <span key={cfg.period} style={{ color: cfg.color }}>
+//                     {cfg.label} <span className="text-[#eaecef]">{fmtPrice(tooltip.maValues[cfg.period])}</span>
+//                   </span>
+//                 ) : null
+//               )}
+//               {EMA_CONFIGS.map(cfg =>
+//                 showEMA[cfg.period] && tooltip.emaValues?.[cfg.period] ? (
+//                   <span key={cfg.period} style={{ color: cfg.color }}>
+//                     {cfg.label} <span className="text-[#eaecef]">{fmtPrice(tooltip.emaValues[cfg.period])}</span>
+//                   </span>
+//                 ) : null
+//               )}
+//               {showBB && tooltip.bbValues && (
+//                 <>
+//                   <span className="text-[#26a69a]">BB↑ <span className="text-[#eaecef]">{fmtPrice(tooltip.bbValues.upper)}</span></span>
+//                   <span className="text-[#26a69a66]">BB— <span className="text-[#eaecef]">{fmtPrice(tooltip.bbValues.middle)}</span></span>
+//                   <span className="text-[#26a69a]">BB↓ <span className="text-[#eaecef]">{fmtPrice(tooltip.bbValues.lower)}</span></span>
+//                 </>
+//               )}
+//             </div>
+//           </div>
+//         )}
+
+//         {/* ── Main chart + Canvas overlay ─────────────────────────────────── */}
+//         {/*
+//           Container này cần position: relative để canvas absolute hoạt động.
+//           Canvas overlay nằm trên chart, nhận pointer-events khi đang vẽ.
+//         */}
+//         <div
+//           className="relative w-full"
+//           style={{ flex: '1 1 0', minHeight: 0 }}
+//         >
+//           {/* ── Loading older candles banner ── */}
+//           {isLoadingOlder && (
+//             <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+//               <div className="flex items-center gap-2 bg-[#1e2329dd] backdrop-blur-sm border border-[#2b3139] rounded-full px-3 py-1.5 shadow-lg">
+//                 <svg className="animate-spin w-3 h-3 text-[#f0b90b]" viewBox="0 0 24 24" fill="none">
+//                   <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25"/>
+//                   <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+//                 </svg>
+//                 <span className="text-[10px] text-[#848e9c]">Đang tải nến cũ hơn...</span>
+//               </div>
+//             </div>
+//           )}
+
+//           {/* Canvas overlay cho drawing tools — PHẢI ở trước mainContainerRef */}
+//           <canvas
+//             ref={canvasOverlayRef}
+//             {...canvasProps}
+//           />
+
+//           {/* Main lightweight-chart */}
+//           <div
+//             ref={mainContainerRef}
+//             className="w-full h-full"
+//             style={{
+//               cursor: isDrawingMode
+//                 ? 'none'              // Canvas overlay tự handle cursor khi vẽ
+//                 : isDragging ? 'grabbing' : 'crosshair',
+//             }}
+//             onMouseDown={() => { if (!isDrawingMode) setIsDragging(true) }}
+//             onMouseUp={() => setIsDragging(false)}
+//             onMouseLeave={() => setIsDragging(false)}
+//           />
+//         </div>
+
+//         {/* ── RSI panel ── */}
+//         <div
+//           className="flex-shrink-0 border-t border-[#1a1d26] overflow-hidden transition-all duration-200"
+//           style={{ height: showRSI ? `${panelHeightPct}%` : '0', minHeight: showRSI ? 70 : 0 }}
+//         >
+//           <div className="flex items-center gap-2 px-3 py-0.5 bg-[#0b0e11]">
+//             <span className="text-[9px] text-[#9c27b0] font-medium">RSI({RSI_PERIOD})</span>
+//             <span className="text-[9px] text-[#f6465d66]">— OB 70</span>
+//             <span className="text-[9px] text-[#0ecb8166]">— OS 30</span>
+//           </div>
+//           <div
+//             ref={rsiContainerRef}
+//             className="w-full"
+//             style={{
+//               height: 'calc(100% - 20px)',
+//               cursor: isDragging ? 'grabbing' : 'crosshair',
+//             }}
+//             onMouseDown={() => setIsDragging(true)}
+//             onMouseUp={() => setIsDragging(false)}
+//             onMouseLeave={() => setIsDragging(false)}
+//           />
+//         </div>
+
+//         {/* ── MACD panel ── */}
+//         <div
+//           className="flex-shrink-0 border-t border-[#1a1d26] overflow-hidden transition-all duration-200"
+//           style={{ height: showMACD ? `${panelHeightPct}%` : '0', minHeight: showMACD ? 70 : 0 }}
+//         >
+//           <div className="flex items-center gap-3 px-3 py-0.5 bg-[#0b0e11]">
+//             <span className="text-[9px] text-[#64b5f6] font-medium">MACD({MACD_FAST},{MACD_SLOW},{MACD_SIGNAL})</span>
+//             <span className="text-[9px] text-[#2196f3]">— MACD</span>
+//             <span className="text-[9px] text-[#ff9800]">— Signal</span>
+//             <span className="text-[9px] text-[#848e9c]">█ Hist</span>
+//             {macdTooltip && (
+//               <span className="ml-1 flex items-center gap-2">
+//                 <span className="text-[9px] text-[#2196f3]">M <span className="text-[#eaecef]">{fmtMacd(macdTooltip.macd)}</span></span>
+//                 <span className="text-[9px] text-[#ff9800]">S <span className="text-[#eaecef]">{fmtMacd(macdTooltip.signal)}</span></span>
+//                 <span className={`text-[9px] ${(macdTooltip.hist ?? 0) >= 0 ? 'text-[#0ecb81]' : 'text-[#f6465d]'}`}>
+//                   H <span className="text-[#eaecef]">{fmtMacd(macdTooltip.hist)}</span>
+//                 </span>
+//               </span>
+//             )}
+//           </div>
+//           <div
+//             ref={macdContainerRef}
+//             className="w-full"
+//             style={{
+//               height: 'calc(100% - 20px)',
+//               cursor: isDragging ? 'grabbing' : 'crosshair',
+//             }}
+//             onMouseDown={() => setIsDragging(true)}
+//             onMouseUp={() => setIsDragging(false)}
+//             onMouseLeave={() => setIsDragging(false)}
+//           />
+//         </div>
+
+//       </div>
+//     </div>
+//   )
+// }
+
+import React, { useEffect, useRef, useState, useCallback } from 'react'
+import { createChart, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts'
+import { useChartStore } from '../store/chartStore'
+import { useKlineData } from '../hooks/useKlineData'
+import DrawingToolbar from './DrawingToolbar'
+import { useDrawingTools } from '../hooks/useDrawingTools'
+
+// ── Interval groups ──────────────────────────────────────────────────────────
+const INTERVAL_GROUPS = [
+  {
+    label: 'Phút',
+    items: [
+      { label: '1m', value: '1m' },
+      { label: '3m', value: '3m' },
+      { label: '5m', value: '5m' },
+      { label: '15m', value: '15m' },
+      { label: '30m', value: '30m' },
+    ],
+  },
+  {
+    label: 'Giờ',
+    items: [
+      { label: '1h', value: '1h' },
+      { label: '2h', value: '2h' },
+      { label: '4h', value: '4h' },
+      { label: '6h', value: '6h' },
+      { label: '8h', value: '8h' },
+      { label: '12h', value: '12h' },
+    ],
+  },
+  {
+    label: 'Ngày / Tuần / Tháng',
+    items: [
+      { label: '1D', value: '1d' },
+      { label: '3D', value: '3d' },
+      { label: '1W', value: '1w' },
+      { label: '1M', value: '1M' },
+    ],
+  },
+]
+
+const ALL_INTERVALS = INTERVAL_GROUPS.flatMap(g => g.items)
+const PINNED = ['15m', '1h', '4h', '1d', '1w']
+
+const MA_CONFIGS = [
+  { period: 20, color: '#f0b90b', label: 'MA20' },
+  { period: 50, color: '#2196f3', label: 'MA50' },
+  { period: 200, color: '#e91e63', label: 'MA200' },
+]
+
+const EMA_CONFIGS = [
+  { period: 9, color: '#ff6b35', label: 'EMA9' },
+  { period: 21, color: '#a855f7', label: 'EMA21' },
+]
+
+const RSI_PERIOD = 14
+const MACD_FAST = 12
+const MACD_SLOW = 26
+const MACD_SIGNAL = 9
+const BB_PERIOD = 20
+const BB_MULT = 2
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function calcMA(data, period) {
+  const result = []
+  let sum = 0
+  for (let i = 0; i < data.length; i++) {
+    sum += data[i].close
+    if (i >= period) sum -= data[i - period].close
+    if (i >= period - 1) result.push({ time: data[i].time, value: sum / period })
+  }
+  return result
+}
+
+function calcEMALine(data, period) {
+  if (data.length < period) return { series: [], lastEMA: null }
+  const k = 2 / (period + 1)
+  let ema = 0
+  for (let i = 0; i < period; i++) ema += data[i].close
+  ema /= period
+  const series = [{ time: data[period - 1].time, value: ema }]
+  for (let i = period; i < data.length; i++) {
+    ema = data[i].close * k + ema * (1 - k)
+    series.push({ time: data[i].time, value: ema })
+  }
+  return { series, lastEMA: ema }
+}
+
+function calcBB(data, period = BB_PERIOD, mult = BB_MULT) {
+  const upper = [], middle = [], lower = []
+  let sum = 0
+  const win = []
+  for (let i = 0; i < data.length; i++) {
+    const c = data[i].close
+    win.push(c); sum += c
+    if (win.length > period) sum -= win.shift()
+    if (win.length === period) {
+      const avg = sum / period
+      let sq = 0
+      for (let j = 0; j < win.length; j++) sq += (win[j] - avg) ** 2
+      const sd = Math.sqrt(sq / period)
+      middle.push({ time: data[i].time, value: avg })
+      upper.push({ time: data[i].time, value: avg + mult * sd })
+      lower.push({ time: data[i].time, value: avg - mult * sd })
+    }
+  }
+  return { upper, middle, lower }
+}
+
+function calcBBIncr(data, period = BB_PERIOD, mult = BB_MULT) {
+  if (data.length < period) return null
+  const win = data.slice(-period)
+  const avg = win.reduce((s, d) => s + d.close, 0) / period
+  let sq = 0
+  for (let i = 0; i < win.length; i++) sq += (win[i].close - avg) ** 2
+  const sd = Math.sqrt(sq / period)
+  return { time: data[data.length - 1].time, avg, upper: avg + mult * sd, lower: avg - mult * sd }
+}
+
+function calcRSIFull(data, period = 14) {
+  if (data.length < period + 1) return { values: [], state: null }
+  const values = []
+  let avgGain = 0, avgLoss = 0
+  for (let i = 1; i <= period; i++) {
+    const d = data[i].close - data[i - 1].close
+    if (d > 0) avgGain += d; else avgLoss += Math.abs(d)
+  }
+  avgGain /= period; avgLoss /= period
+  values.push({ time: data[period].time, value: avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss) })
+  for (let i = period + 1; i < data.length; i++) {
+    const d = data[i].close - data[i - 1].close
+    avgGain = (avgGain * (period - 1) + Math.max(d, 0)) / period
+    avgLoss = (avgLoss * (period - 1) + Math.max(-d, 0)) / period
+    values.push({ time: data[i].time, value: avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss) })
+  }
+  return { values, state: { avgGain, avgLoss } }
+}
+
+function calcEMAFull(closes, period) {
+  if (closes.length < period) return { values: [], lastEMA: null }
+  const k = 2 / (period + 1)
+  let ema = closes.slice(0, period).reduce((s, v) => s + v, 0) / period
+  const values = [ema]
+  for (let i = period; i < closes.length; i++) {
+    ema = closes[i] * k + ema * (1 - k)
+    values.push(ema)
+  }
+  return { values, lastEMA: ema }
+}
+
+function calcMACDFull(data, fast = 12, slow = 26, signal = 9) {
+  if (data.length < slow + signal) {
+    return { macdLine: [], signalLine: [], histogram: [], state: null }
+  }
+  const closes = data.map(d => d.close)
+  const kFast = 2 / (fast + 1)
+  const kSlow = 2 / (slow + 1)
+  const kSig = 2 / (signal + 1)
+  const { values: emaFastAll, lastEMA: lastFast } = calcEMAFull(closes, fast)
+  const { values: emaSlowAll, lastEMA: lastSlow } = calcEMAFull(closes, slow)
+  const offset = slow - fast
+  const macdRaw = emaSlowAll.map((sv, i) => sv != null ? emaFastAll[i + offset] - sv : null).filter(v => v != null)
+  if (macdRaw.length < signal) {
+    return { macdLine: [], signalLine: [], histogram: [], state: null }
+  }
+  const { values: signalAll, lastEMA: lastSignalEMA } = calcEMAFull(macdRaw, signal)
+  const macdLine = [], signalLine = [], histogram = []
+  signalAll.forEach((sv, i) => {
+    const dataIdx = slow - 1 + i + (signal - 1)
+    if (dataIdx >= data.length) return
+    const mv = macdRaw[i + signal - 1]
+    if (mv == null) return
+    const hv = mv - sv
+    macdLine.push({ time: data[dataIdx].time, value: mv })
+    signalLine.push({ time: data[dataIdx].time, value: sv })
+    histogram.push({ time: data[dataIdx].time, value: hv, color: hv >= 0 ? '#0ecb8188' : '#f6465d88' })
+  })
+  const lastMacd = macdLine.length ? macdLine[macdLine.length - 1].value : 0
+  return {
+    macdLine, signalLine, histogram,
+    state: {
+      lastEmaFast: lastFast,
+      lastEmaSlow: lastSlow,
+      lastSignal: lastSignalEMA ?? lastMacd,
+      kFast, kSlow, kSig,
+    },
+  }
+}
+
+function fmtPrice(p) {
+  if (p == null || !isFinite(p)) return '---'
+  if (p >= 10000) return p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  if (p >= 1000) return p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  if (p >= 100) return p.toFixed(3)
+  if (p >= 10) return p.toFixed(4)
+  if (p >= 1) return p.toFixed(4)
+  if (p >= 0.1) return p.toFixed(5)
+  if (p >= 0.01) return p.toFixed(6)
+  if (p >= 0.001) return p.toFixed(7)
+  if (p >= 0.0001) return p.toFixed(8)
+  return p.toFixed(10)
+}
+
+function fmtMacd(v) {
+  if (v == null || !isFinite(v)) return '---'
+  const a = Math.abs(v)
+  return a >= 0.0001 ? v.toFixed(4) : v.toExponential(2)
+}
+
+function fmtVol(n) {
+  if (!isFinite(n) || n <= 0) return '---'
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B'
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'
+  if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K'
+  return n.toFixed(2)
+}
+
+function getPriceFormat(price) {
+  if (!price || !isFinite(price) || price <= 0) {
+    return { type: 'price', precision: 8, minMove: 0.00000001 }
+  }
+  if (price >= 10000) return { type: 'price', precision: 2, minMove: 0.01 }
+  if (price >= 1000) return { type: 'price', precision: 2, minMove: 0.01 }
+  if (price >= 100) return { type: 'price', precision: 3, minMove: 0.001 }
+  if (price >= 10) return { type: 'price', precision: 4, minMove: 0.0001 }
+  if (price >= 1) return { type: 'price', precision: 4, minMove: 0.0001 }
+  if (price >= 0.1) return { type: 'price', precision: 5, minMove: 0.00001 }
+  if (price >= 0.01) return { type: 'price', precision: 6, minMove: 0.000001 }
+  if (price >= 0.001) return { type: 'price', precision: 7, minMove: 0.0000001 }
+  if (price >= 0.0001) return { type: 'price', precision: 8, minMove: 0.00000001 }
+  return { type: 'price', precision: 10, minMove: 0.0000000001 }
+}
+
+function throttle(fn, ms) {
+  let last = 0, timer = null
+  return function (...args) {
+    const now = Date.now()
+    const remaining = ms - (now - last)
+    if (remaining <= 0) {
+      if (timer) { clearTimeout(timer); timer = null }
+      last = now
+      fn.apply(this, args)
+    } else {
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        last = Date.now(); timer = null
+        fn.apply(this, args)
+      }, remaining)
+    }
+  }
+}
+
+// ── Component ────────────────────────────────────────────────────────────────
+
+// ── GoToDate modal — giống TradingView "Go to" ───────────────────────────────
+function GoToDateModal({ onClose, onGoto }) {
+  const today = new Date()
+  const [viewYear, setViewYear] = React.useState(today.getFullYear())
+  const [viewMonth, setViewMonth] = React.useState(today.getMonth()) // 0-based
+  const [selDate, setSelDate] = React.useState(null)
+  const [timeStr, setTimeStr] = React.useState('00:00')
+
+  const MONTHS_VI = ['Tháng 1', 'Tháng 2', 'Tháng 3', 'Tháng 4', 'Tháng 5', 'Tháng 6',
+    'Tháng 7', 'Tháng 8', 'Tháng 9', 'Tháng 10', 'Tháng 11', 'Tháng 12']
+
+  function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate() }
+  function firstDayOfMonth(y, m) {
+    // 0=Sun → shift to Mon=0
+    const d = new Date(y, m, 1).getDay()
+    return d === 0 ? 6 : d - 1
+  }
+
+  function prevMonth() {
+    if (viewMonth === 0) { setViewYear(y => y - 1); setViewMonth(11) }
+    else setViewMonth(m => m - 1)
+  }
+  function nextMonth() {
+    if (viewMonth === 11) { setViewYear(y => y + 1); setViewMonth(0) }
+    else setViewMonth(m => m + 1)
+  }
+
+  function handleGoto() {
+    if (!selDate) return
+    const [h, min] = timeStr.split(':').map(Number)
+    const dt = new Date(selDate.y, selDate.m, selDate.d, h || 0, min || 0, 0)
+    onGoto(Math.floor(dt.getTime() / 1000))
+    onClose()
+  }
+
+  const days = daysInMonth(viewYear, viewMonth)
+  const firstDay = firstDayOfMonth(viewYear, viewMonth)
+  const cells = []
+  for (let i = 0; i < firstDay; i++) cells.push(null)
+  for (let d = 1; d <= days; d++) cells.push(d)
+
+  const isFuture = (d) => {
+    const dt = new Date(viewYear, viewMonth, d)
+    const t = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+    return dt > t
+  }
+  const isToday = (d) =>
+    d === today.getDate() && viewMonth === today.getMonth() && viewYear === today.getFullYear()
+  const isSel = (d) =>
+    selDate && d === selDate.d && viewMonth === selDate.m && viewYear === selDate.y
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="relative bg-[#1e2329] border border-[#2b3139] rounded-xl shadow-2xl w-80 overflow-hidden">
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[#2b3139]">
+          <span className="text-[13px] font-semibold text-[#eaecef]">Go to</span>
+          <button onClick={onClose} className="text-[#5e6673] hover:text-white transition-colors">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M1 1l12 12M13 1L1 13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Date + Time input row */}
+        <div className="flex gap-2 px-4 pt-3 pb-2">
+          <div className="flex-1 bg-[#0b0e11] border border-[#2b3139] rounded-lg px-3 py-2 flex items-center gap-2 focus-within:border-[#f0b90b]">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="text-[#5e6673] flex-shrink-0">
+              <rect x="1" y="2" width="10" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+              <path d="M4 1v2M8 1v2M1 5h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            </svg>
+            <span className="text-[11px] text-[#eaecef] font-mono">
+              {selDate
+                ? `${selDate.y}-${String(selDate.m + 1).padStart(2, '0')}-${String(selDate.d).padStart(2, '0')}`
+                : <span className="text-[#5e6673]">YYYY-MM-DD</span>
+              }
+            </span>
+          </div>
+          <div className="bg-[#0b0e11] border border-[#2b3139] rounded-lg px-3 py-2 flex items-center gap-2 w-28 focus-within:border-[#f0b90b]">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="text-[#5e6673] flex-shrink-0">
+              <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.2" />
+              <path d="M6 3.5V6l1.5 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            </svg>
+            <input
+              type="text" value={timeStr} maxLength={5}
+              onChange={e => {
+                const v = e.target.value.replace(/[^0-9:]/g, '')
+                setTimeStr(v)
+              }}
+              className="bg-transparent text-[11px] text-[#eaecef] font-mono w-full outline-none"
+              placeholder="00:00"
+            />
+          </div>
+        </div>
+
+        {/* Month nav */}
+        <div className="flex items-center justify-between px-4 py-2">
+          <button onClick={prevMonth} className="text-[#848e9c] hover:text-white p-1 rounded transition-colors">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M9 2L4 7l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <span className="text-[12px] font-semibold text-[#eaecef]">
+            {MONTHS_VI[viewMonth]} {viewYear}
+          </span>
+          <button onClick={nextMonth} className="text-[#848e9c] hover:text-white p-1 rounded transition-colors">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M5 2l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Day headers */}
+        <div className="grid grid-cols-7 px-3 mb-1">
+          {['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].map(d => (
+            <div key={d} className="text-center text-[9px] text-[#5e6673] font-medium py-1">{d}</div>
+          ))}
+        </div>
+
+        {/* Calendar grid */}
+        <div className="grid grid-cols-7 px-3 pb-3 gap-y-0.5">
+          {cells.map((d, i) => (
+            <div key={i} className="flex items-center justify-center">
+              {d ? (
+                <button
+                  onClick={() => !isFuture(d) && setSelDate({ y: viewYear, m: viewMonth, d })}
+                  className={`w-8 h-8 text-[11px] rounded-full transition-all font-medium
+                    ${isFuture(d) ? 'text-[#2b3139] cursor-not-allowed' :
+                      isSel(d) ? 'bg-[#f0b90b] text-black' :
+                        isToday(d) ? 'border border-[#f0b90b] text-[#f0b90b]' :
+                          'text-[#eaecef] hover:bg-[#2b3139]'
+                    }`}>
+                  {d}
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+
+        {/* Footer */}
+        <div className="flex gap-2 px-4 pb-4">
+          <button onClick={onClose}
+            className="flex-1 py-2 rounded-lg border border-[#2b3139] text-[11px] text-[#848e9c] hover:text-white hover:border-[#4c525e] transition-all">
+            Huỷ
+          </button>
+          <button onClick={handleGoto} disabled={!selDate}
+            className={`flex-1 py-2 rounded-lg text-[11px] font-semibold transition-all ${selDate ? 'bg-[#f0b90b] text-black hover:bg-[#f0b90bdd]' : 'bg-[#2b3139] text-[#5e6673] cursor-not-allowed'
+              }`}>
+            Go to
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function ChartPanel() {
+  const mainContainerRef = useRef(null)
+  const rsiContainerRef = useRef(null)
+  const macdContainerRef = useRef(null)
+
+  // ── Canvas overlay ref cho drawing tools ──
+  const canvasOverlayRef = useRef(null)
+
+  const mainChartRef = useRef(null)
+  const rsiChartRef = useRef(null)
+  const macdChartRef = useRef(null)
+  const candleRef = useRef(null)
+  const volumeRef = useRef(null)
+  const maRefs = useRef({})
+  const emaRefs = useRef({})
+  const emaStateRef = useRef({})
+  const rsiLineRef = useRef(null)
+  const macdLineRef = useRef(null)
+  const macdSignalRef = useRef(null)
+  const macdHistRef = useRef(null)
+  const bbUpperRef = useRef(null)
+  const bbMiddleRef = useRef(null)
+  const bbLowerRef = useRef(null)
+
+  const klineDataRef = useRef([])
+  const rsiStateRef = useRef(null)
+  const macdStateRef = useRef(null)
+  const loadMoreRef = useRef(null)   // fn được useKlineData gán — gọi để load nến cũ hơn
+  const isLoadingBanner = useRef(false)  // tránh hiện banner loading nhiều lần
+
+  const [showPicker, setShowPicker] = useState(false)
+  const [showGoTo, setShowGoTo] = useState(false)
+  const [tooltip, setTooltip] = useState(null)
+  const [macdTooltip, setMacdTooltip] = useState(null)
+  const [isDragging, setIsDragging] = useState(false)
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false)  // hiện spinner khi load nến cũ
+
+  // ── Drawing tool state ────────────────────────────────────────────────────
+  const [activeTool, setActiveTool] = useState('cursor')
+  const [drawingColor, setDrawingColor] = useState('#2962ff')
+  const [lineWidth, setLineWidth] = useState(1)
+  const [lineStyle, setLineStyle] = useState('solid')
+  const [keepDrawing, setKeepDrawing] = useState(false)
+  const [magnetMode, setMagnetMode] = useState('none')  // 'none' | 'weak' | 'strong'
+
+  // pixelToPrice: chuyển canvas Y coordinate → giá
+  const pixelToPriceRef = useRef(null)
+  const pixelToPrice = useCallback((y) => pixelToPriceRef.current?.(y) ?? null, [])
+
+  // pixelToTime: chuyển canvas X coordinate → Date (cho crosshair label trục X)
+  const pixelToTimeRef2 = useRef(null)
+  const pixelToTime = useCallback((x) => pixelToTimeRef2.current?.(x) ?? null, [])
+
+  const {
+    symbol, interval, market, setInterval,
+    showMA, setShowMA,
+    showEMA, setShowEMA,
+    showRSI, setShowRSI,
+    showVolume, setShowVolume,
+    showMACD, setShowMACD,
+    showBB, setShowBB,
+  } = useChartStore()
+
+  // ── Drawing tools hook ────────────────────────────────────────────────────
+  const {
+    drawingCount,
+    hiddenAll,
+    lockedAll,
+    handleAction,
+    canvasProps,
+  } = useDrawingTools({
+    canvasRef: canvasOverlayRef,
+    activeTool,
+    drawingColor,
+    lineWidth,
+    lineStyle,
+    onToolChange: setActiveTool,
+    keepDrawing,
+    magnetMode,
+    pixelToPrice,
+    pixelToTime,
+  })
+
+  const currentLabel = ALL_INTERVALS.find(i => i.value === interval)?.label ?? interval
+  const isPinned = PINNED.includes(interval)
+
+  // Khi đang ở drawing mode → disable isDragging để tránh conflict
+  const isDrawingMode = activeTool !== 'cursor' && activeTool !== 'cross'
+
+  // ── Tạo tất cả charts một lần ────────────────────────────────────────────
+  useEffect(() => {
+    if (!mainContainerRef.current || !rsiContainerRef.current || !macdContainerRef.current) return
+
+    const baseLayout = {
+      background: { color: '#0b0e11' },
+      textColor: '#848e9c',
+      fontFamily: 'Inter, system-ui, sans-serif',
+      attributionLogo: false,
+    }
+    const baseGrid = {
+      vertLines: { color: '#1a1d26', style: 1 },
+      horzLines: { color: '#1a1d26', style: 1 },
+    }
+    const subCrosshair = {
+      mode: 1,
+      vertLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139' },
+      horzLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139', labelVisible: true },
+    }
+
+    const mainChart = createChart(mainContainerRef.current, {
+      autoSize: true,
+      layout: { ...baseLayout, fontSize: 11 },
+      grid: baseGrid,
+      crosshair: {
+        mode: 0,
+        vertLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139' },
+        horzLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139' },
+      },
+      rightPriceScale: {
+        borderColor: '#1a1d26',
+        scaleMargins: { top: 0.08, bottom: 0.22 },
+        textColor: '#848e9c',
+      },
+      timeScale: {
+        borderColor: '#1a1d26',
+        timeVisible: true,
+        secondsVisible: false,
+        barSpacing: 6,
+        minBarSpacing: 0.5,
+        maxBarSpacing: 20,
+        rightOffset: 12,
+        lockVisibleTimeRangeOnResize: true,
+      },
+    })
+
+    const candles = mainChart.addSeries(CandlestickSeries, {
+      upColor: '#0ecb81', downColor: '#f6465d',
+      borderUpColor: '#0ecb81', borderDownColor: '#f6465d',
+      wickUpColor: '#0ecb81', wickDownColor: '#f6465d',
+      thinBars: true,
+      candleBodyMaxWidth: 8,
+      candleWickMaxWidth: 1,
+    })
+
+    const volume = mainChart.addSeries(HistogramSeries, {
+      priceFormat: { type: 'volume' },
+      priceScaleId: 'vol',
+    })
+    mainChart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
+
+    const maSeriesMap = {}
+    MA_CONFIGS.forEach(cfg => {
+      maSeriesMap[cfg.period] = mainChart.addSeries(LineSeries, {
+        color: cfg.color, lineWidth: 1,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        visible: cfg.period !== 200,
+      })
+    })
+
+    const emaSeriesMap = {}
+    EMA_CONFIGS.forEach(cfg => {
+      emaSeriesMap[cfg.period] = mainChart.addSeries(LineSeries, {
+        color: cfg.color, lineWidth: 1, lineStyle: 0,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        visible: false,
+      })
+    })
+
+    const bbUpper = mainChart.addSeries(LineSeries, {
+      color: '#26a69a', lineWidth: 1, lineStyle: 2,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      visible: false,
+    })
+    const bbMiddle = mainChart.addSeries(LineSeries, {
+      color: '#26a69a66', lineWidth: 1, lineStyle: 2,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      visible: false,
+    })
+    const bbLower = mainChart.addSeries(LineSeries, {
+      color: '#26a69a', lineWidth: 1, lineStyle: 2,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      visible: false,
+    })
+
+    const rsiChart = createChart(rsiContainerRef.current, {
+      autoSize: true,
+      layout: { ...baseLayout, fontSize: 10 },
+      grid: baseGrid,
+      crosshair: subCrosshair,
+      rightPriceScale: { borderColor: '#1a1d26', textColor: '#848e9c', scaleMargins: { top: 0.1, bottom: 0.1 } },
+      timeScale: { visible: false },
+      handleScroll: false, handleScale: false,
+    })
+
+    const rsiLine = rsiChart.addSeries(LineSeries, {
+      color: '#9c27b0', lineWidth: 1.5,
+      priceLineVisible: false, lastValueVisible: true,
+    })
+    rsiLine.createPriceLine({ price: 70, color: '#f6465d88', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'OB' })
+    rsiLine.createPriceLine({ price: 30, color: '#0ecb8188', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'OS' })
+
+    const macdChart = createChart(macdContainerRef.current, {
+      autoSize: true,
+      layout: { ...baseLayout, fontSize: 10 },
+      grid: baseGrid,
+      crosshair: subCrosshair,
+      rightPriceScale: { borderColor: '#1a1d26', textColor: '#848e9c', scaleMargins: { top: 0.1, bottom: 0.1 } },
+      timeScale: { visible: false },
+      handleScroll: false, handleScale: false,
+    })
+
+    const macdHist = macdChart.addSeries(HistogramSeries, {
+      priceFormat: { type: 'price', precision: 6, minMove: 0.000001 },
+      lastValueVisible: false,
+    })
+    const macdLine = macdChart.addSeries(LineSeries, {
+      color: '#2196f3', lineWidth: 1.5,
+      priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: true,
+    })
+    const macdSignal = macdChart.addSeries(LineSeries, {
+      color: '#ff9800', lineWidth: 1,
+      priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: true,
+    })
+    macdLine.createPriceLine({ price: 0, color: '#4c525e', lineWidth: 1, lineStyle: 1, axisLabelVisible: false })
+
+    // throttle sync sub-charts để tránh lag khi scroll nhanh
+    let syncRaf = null
+    mainChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+      if (!range) return
+      if (syncRaf) cancelAnimationFrame(syncRaf)
+      syncRaf = requestAnimationFrame(() => {
+        rsiChart.timeScale().setVisibleLogicalRange(range)
+        macdChart.timeScale().setVisibleLogicalRange(range)
+        syncRaf = null
+      })
+
+      // ── Infinite scroll backward: khi scroll đến gần đầu chart (from < 10 nến) ──
+      if (range.from < 10 && loadMoreRef.current && !isLoadingBanner.current) {
+        isLoadingBanner.current = true
+        setIsLoadingOlder(true)
+        loadMoreRef.current().finally(() => {
+          isLoadingBanner.current = false
+          setIsLoadingOlder(false)
+        })
+      }
+    })
+
+    const onMain = throttle((param) => {
+      if (!param.time || !param.point) { setTooltip(null); return }
+      const bar = param.seriesData?.get(candles)
+      const vol = param.seriesData?.get(volume)
+      if (!bar) { setTooltip(null); return }
+      const maValues = {}
+      MA_CONFIGS.forEach(cfg => {
+        const v = param.seriesData?.get(maSeriesMap[cfg.period])
+        if (v) maValues[cfg.period] = v.value
+      })
+      const emaValues = {}
+      EMA_CONFIGS.forEach(cfg => {
+        const v = param.seriesData?.get(emaSeriesMap[cfg.period])
+        if (v) emaValues[cfg.period] = v.value
+      })
+      const bbU = param.seriesData?.get(bbUpper)
+      const bbM = param.seriesData?.get(bbMiddle)
+      const bbL = param.seriesData?.get(bbLower)
+      const bbValues = (bbU && bbM && bbL) ? { upper: bbU.value, middle: bbM.value, lower: bbL.value } : null
+      setTooltip({ open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: vol?.value ?? 0, isUp: bar.close >= bar.open, maValues, emaValues, bbValues })
+    }, 16)
+
+    const onMacd = throttle((param) => {
+      if (!param.time || !param.point) { setMacdTooltip(null); return }
+      const m = param.seriesData?.get(macdLine)
+      const s = param.seriesData?.get(macdSignal)
+      const h = param.seriesData?.get(macdHist)
+      if (!m) { setMacdTooltip(null); return }
+      setMacdTooltip({ macd: m?.value, signal: s?.value, hist: h?.value })
+    }, 16)
+
+    mainChart.subscribeCrosshairMove(onMain)
+    macdChart.subscribeCrosshairMove(onMacd)
+
+    mainChartRef.current = mainChart
+    rsiChartRef.current = rsiChart
+    macdChartRef.current = macdChart
+    candleRef.current = candles
+    volumeRef.current = volume
+    maRefs.current = maSeriesMap
+    emaRefs.current = emaSeriesMap
+    rsiLineRef.current = rsiLine
+    macdLineRef.current = macdLine
+    macdSignalRef.current = macdSignal
+    macdHistRef.current = macdHist
+    bbUpperRef.current = bbUpper
+    bbMiddleRef.current = bbMiddle
+    bbLowerRef.current = bbLower
+
+    // ── Wire pixelToPrice từ priceScale của mainChart ──
+    // Canvas overlay absolute top:0 left:0 trên container cha.
+    // lightweight-charts vẽ chart pane bên trong container — cùng origin nên Y giống nhau.
+    // Tuy nhiên mainChart.priceScale('right').coordinateToPrice(y) nhận y tính từ
+    // phần trên của chart pane (không bao gồm topbar của lw-charts).
+    // Dùng getBoundingClientRect để tính offset chính xác.
+    pixelToPriceRef.current = (canvasY) => {
+      try {
+        const canvas = canvasOverlayRef.current
+        const chartDiv = mainContainerRef.current
+        if (!canvas || !chartDiv) return null
+        // Tìm phần tử <canvas> bên trong lightweight-charts (chart pane thực sự)
+        const lwCanvas = chartDiv.querySelector('canvas')
+        if (lwCanvas) {
+          const lwRect = lwCanvas.getBoundingClientRect()
+          const canvasRect = canvas.getBoundingClientRect()
+          // y tương đối so với lw-chart canvas
+          const yInChart = canvasY - (lwRect.top - canvasRect.top)
+          return mainChart.priceScale('right').coordinateToPrice(yInChart)
+        }
+        return mainChart.priceScale('right').coordinateToPrice(canvasY)
+      } catch {
+        return null
+      }
+    }
+
+    // ── Wire pixelToTime từ timeScale của mainChart ──
+    // coordinateToTime trả về Unix timestamp (số giây) — lightweight-charts dùng UTC.
+    pixelToTimeRef2.current = (canvasX) => {
+      try {
+        const canvas = canvasOverlayRef.current
+        const chartDiv = mainContainerRef.current
+        if (!canvas || !chartDiv) return null
+        const lwCanvas = chartDiv.querySelector('canvas')
+        let xInChart = canvasX
+        if (lwCanvas) {
+          const lwRect = lwCanvas.getBoundingClientRect()
+          const canvasRect = canvas.getBoundingClientRect()
+          xInChart = canvasX - (lwRect.left - canvasRect.left)
+        }
+        const ts = mainChart.timeScale().coordinateToTime(xInChart)
+        if (ts == null) return null
+        // lightweight-charts trả về seconds epoch (UTC) hoặc 'yyyy-mm-dd' string
+        if (typeof ts === 'number') return new Date(ts * 1000)  // ms UTC
+        if (typeof ts === 'string') return new Date(ts)          // parse ISO date
+        return null
+      } catch {
+        return null
+      }
+    }
+
+    return () => {
+      mainChart.remove(); rsiChart.remove(); macdChart.remove()
+      mainChartRef.current = rsiChartRef.current = macdChartRef.current = null
+      candleRef.current = volumeRef.current = null
+      maRefs.current = {}
+      emaRefs.current = {}
+      emaStateRef.current = {}
+      rsiLineRef.current = macdLineRef.current = macdSignalRef.current = macdHistRef.current = null
+      bbUpperRef.current = bbMiddleRef.current = bbLowerRef.current = null
+      pixelToPriceRef.current = null
+      pixelToTimeRef2.current = null
+    }
+  }, [])
+
+  // ── Toggle MA ──────────────────────────────────────────────────────────────
+  useEffect(() => {
+    MA_CONFIGS.forEach(cfg => maRefs.current[cfg.period]?.applyOptions({ visible: showMA[cfg.period] }))
+  }, [showMA])
+
+  // ── Toggle EMA ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    EMA_CONFIGS.forEach(cfg => {
+      emaRefs.current[cfg.period]?.applyOptions({ visible: showEMA[cfg.period] })
+    })
+    EMA_CONFIGS.forEach(cfg => {
+      if (showEMA[cfg.period] && klineDataRef.current.length >= cfg.period) {
+        const { series } = calcEMALine(klineDataRef.current, cfg.period)
+        emaRefs.current[cfg.period]?.setData(series)
+      }
+    })
+  }, [showEMA])
+
+  // ── Toggle Volume ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    volumeRef.current?.applyOptions({ visible: showVolume })
+  }, [showVolume])
+
+  // ── Toggle BB ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    bbUpperRef.current?.applyOptions({ visible: showBB })
+    bbMiddleRef.current?.applyOptions({ visible: showBB })
+    bbLowerRef.current?.applyOptions({ visible: showBB })
+    if (showBB && klineDataRef.current.length >= BB_PERIOD) {
+      const { upper, middle, lower } = calcBB(klineDataRef.current)
+      bbUpperRef.current?.setData(upper)
+      bbMiddleRef.current?.setData(middle)
+      bbLowerRef.current?.setData(lower)
+    }
+  }, [showBB])
+
+  // ── Resize main chart khi panels thay đổi ─────────────────────────────────
+  useEffect(() => {
+    const bottom = (showRSI ? 0.18 : 0) + (showMACD ? 0.18 : 0)
+    mainChartRef.current?.applyOptions({
+      rightPriceScale: { scaleMargins: { top: 0.08, bottom: Math.max(bottom, 0.08) } },
+    })
+    setTimeout(() => mainChartRef.current?.timeScale().fitContent(), 50)
+  }, [showRSI, showMACD])
+
+  // ── Auto scroll to realtime khi WS tick mới nhất là nến MỚI (không phải update) ──
+  // Chỉ auto-scroll khi user đang ở cuối chart (rightOffset < 20 nến)
+  const lastCandleTimeRef = useRef(null)
+
+  // ── onData: full calc sau khi REST load ───────────────────────────────────
+  const onKlineData = useCallback((data) => {
+    klineDataRef.current = [...data]
+
+    if (data.length > 0) {
+      const samplePrice = data[data.length - 1].close
+      const fmt = getPriceFormat(samplePrice)
+      candleRef.current?.applyOptions({ priceFormat: fmt })
+      MA_CONFIGS.forEach(cfg => maRefs.current[cfg.period]?.applyOptions({ priceFormat: fmt }))
+      EMA_CONFIGS.forEach(cfg => emaRefs.current[cfg.period]?.applyOptions({ priceFormat: fmt }))
+      bbUpperRef.current?.applyOptions({ priceFormat: fmt })
+      bbMiddleRef.current?.applyOptions({ priceFormat: fmt })
+      bbLowerRef.current?.applyOptions({ priceFormat: fmt })
+    }
+
+    MA_CONFIGS.forEach(cfg => maRefs.current[cfg.period]?.setData(calcMA(data, cfg.period)))
+
+    EMA_CONFIGS.forEach(cfg => {
+      if (data.length < cfg.period) return
+      const { series, lastEMA } = calcEMALine(data, cfg.period)
+      emaRefs.current[cfg.period]?.setData(series)
+      emaStateRef.current[cfg.period] = lastEMA
+    })
+
+    if (bbUpperRef.current && data.length >= BB_PERIOD) {
+      const { upper, middle, lower } = calcBB(data)
+      bbUpperRef.current.setData(upper)
+      bbMiddleRef.current.setData(middle)
+      bbLowerRef.current.setData(lower)
+    }
+
+    const { values: rsiVals, state: rsiState } = calcRSIFull(data, RSI_PERIOD)
+    if (rsiVals.length > 0) {
+      rsiLineRef.current?.setData(rsiVals)
+      rsiStateRef.current = rsiState
+    }
+
+    const { macdLine, signalLine, histogram, state: macdState } = calcMACDFull(data, MACD_FAST, MACD_SLOW, MACD_SIGNAL)
+    if (macdLine.length > 0) {
+      macdLineRef.current?.setData(macdLine)
+      macdSignalRef.current?.setData(signalLine)
+      macdHistRef.current?.setData(histogram)
+      macdStateRef.current = macdState
+    }
+  }, [])
+
+  // ── onUpdate: O(1) per tick ───────────────────────────────────────────────
+  const onKlineUpdate = useCallback((candle) => {
+    const data = klineDataRef.current
+    if (!data.length) return
+
+    const last = data[data.length - 1]
+    const isNew = last.time !== candle.time
+    if (isNew) data.push({ ...candle })
+    else data[data.length - 1] = { ...last, ...candle }
+
+    MA_CONFIGS.forEach(cfg => {
+      const s = maRefs.current[cfg.period]
+      if (!s || data.length < cfg.period) return
+      const sum = data.slice(-cfg.period).reduce((a, x) => a + x.close, 0)
+      s.update({ time: candle.time, value: sum / cfg.period })
+    })
+
+    EMA_CONFIGS.forEach(cfg => {
+      const s = emaRefs.current[cfg.period]
+      if (!s) return
+      const lastEMA = emaStateRef.current[cfg.period]
+      if (lastEMA == null) return
+      const k = 2 / (cfg.period + 1)
+      const newEMA = candle.close * k + lastEMA * (1 - k)
+      s.update({ time: candle.time, value: newEMA })
+      if (isNew) emaStateRef.current[cfg.period] = newEMA
+    })
+
+    if (data.length >= BB_PERIOD) {
+      const bb = calcBBIncr(data)
+      if (bb) {
+        bbUpperRef.current?.update({ time: bb.time, value: bb.upper })
+        bbMiddleRef.current?.update({ time: bb.time, value: bb.avg })
+        bbLowerRef.current?.update({ time: bb.time, value: bb.lower })
+      }
+    }
+
+    if (rsiStateRef.current && data.length >= 2) {
+      const prev = data[data.length - 2]
+      const diff = candle.close - prev.close
+      let { avgGain: g, avgLoss: l } = rsiStateRef.current
+      const newG = (g * (RSI_PERIOD - 1) + Math.max(diff, 0)) / RSI_PERIOD
+      const newL = (l * (RSI_PERIOD - 1) + Math.max(-diff, 0)) / RSI_PERIOD
+      const val = newL === 0 ? 100 : 100 - 100 / (1 + newG / newL)
+      rsiLineRef.current?.update({ time: candle.time, value: val })
+      if (isNew) rsiStateRef.current = { avgGain: newG, avgLoss: newL }
+    }
+
+    const ms = macdStateRef.current
+    if (ms && ms.lastEmaFast != null) {
+      const newFast = candle.close * ms.kFast + ms.lastEmaFast * (1 - ms.kFast)
+      const newSlow = candle.close * ms.kSlow + ms.lastEmaSlow * (1 - ms.kSlow)
+      const newMacd = newFast - newSlow
+      const newSignal = newMacd * ms.kSig + ms.lastSignal * (1 - ms.kSig)
+      const newHist = newMacd - newSignal
+
+      macdLineRef.current?.update({ time: candle.time, value: newMacd })
+      macdSignalRef.current?.update({ time: candle.time, value: newSignal })
+      macdHistRef.current?.update({ time: candle.time, value: newHist, color: newHist >= 0 ? '#0ecb8188' : '#f6465d88' })
+
+      if (isNew) {
+        macdStateRef.current = { ...ms, lastEmaFast: newFast, lastEmaSlow: newSlow, lastSignal: newSignal }
+      }
+    }
+    // Auto scroll to latest khi nến MỚI xuất hiện (không phải cập nhật nến hiện tại)
+    if (isNew && mainChartRef.current) {
+      try {
+        const ts = mainChartRef.current.timeScale()
+        const range = ts.getVisibleLogicalRange()
+        const total = klineDataRef.current.length
+        // Chỉ auto-scroll nếu user đang xem gần cuối (trong vòng 30 nến cuối)
+        if (range && range.to >= total - 30) {
+          ts.scrollToRealTime()
+        }
+      } catch { }
+    }
+  }, [])
+
+  // ── onPrepend: nhận nến cũ hơn từ useKlineData, merge vào klineDataRef + setData ──
+  const onKlinePrepend = useCallback((olderData) => {
+    if (!olderData || olderData.length === 0) return
+
+    const existing = klineDataRef.current
+    // Merge: older trước, existing sau, loại trùng time
+    const merged = [...olderData]
+    const oldestExisting = existing.length > 0 ? existing[0].time : Infinity
+    for (const d of existing) {
+      if (d.time > olderData[olderData.length - 1].time) merged.push(d)
+    }
+    // Sắp xếp lại theo time tăng dần (Binance thường đã sorted)
+    merged.sort((a, b) => a.time - b.time)
+    klineDataRef.current = merged
+
+    // setData toàn bộ lên chart (lightweight-charts hỗ trợ prepend qua setData)
+    candleRef.current?.setData(merged)
+    if (volumeRef.current) {
+      volumeRef.current.setData(merged.map(d => ({
+        time: d.time,
+        value: d.volume,
+        color: d.close >= d.open ? '#0ecb8155' : '#f6465d55',
+      })))
+    }
+
+    // Recalc toàn bộ indicators trên data mới
+    MA_CONFIGS.forEach(cfg => maRefs.current[cfg.period]?.setData(calcMA(merged, cfg.period)))
+    EMA_CONFIGS.forEach(cfg => {
+      if (merged.length < cfg.period) return
+      const { series, lastEMA } = calcEMALine(merged, cfg.period)
+      emaRefs.current[cfg.period]?.setData(series)
+      emaStateRef.current[cfg.period] = lastEMA
+    })
+    if (merged.length >= BB_PERIOD) {
+      const { upper, middle, lower } = calcBB(merged)
+      bbUpperRef.current?.setData(upper)
+      bbMiddleRef.current?.setData(middle)
+      bbLowerRef.current?.setData(lower)
+    }
+    const { values: rsiVals, state: rsiState } = calcRSIFull(merged, RSI_PERIOD)
+    if (rsiVals.length > 0) { rsiLineRef.current?.setData(rsiVals); rsiStateRef.current = rsiState }
+    const { macdLine, signalLine, histogram, state: macdState } = calcMACDFull(merged, MACD_FAST, MACD_SLOW, MACD_SIGNAL)
+    if (macdLine.length > 0) {
+      macdLineRef.current?.setData(macdLine)
+      macdSignalRef.current?.setData(signalLine)
+      macdHistRef.current?.setData(histogram)
+      macdStateRef.current = macdState
+    }
+  }, [])
+
+  useKlineData(candleRef, volumeRef, symbol, interval, market, onKlineData, onKlineUpdate, onKlinePrepend, loadMoreRef)
+
+  const activePanels = (showRSI ? 1 : 0) + (showMACD ? 1 : 0)
+  const panelHeightPct = activePanels === 1 ? 22 : 18
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // JSX: thêm DrawingToolbar bên trái + canvas overlay trên chart chính
+  // ─────────────────────────────────────────────────────────────────────────
+  return (
+    // Outer: flex ngang — DrawingToolbar | chart area
+    <div className={`flex h-full bg-[#0b0e11] overflow-hidden ${isDragging ? 'chart-grabbing' : ''}`}>
+
+      {/* ── Drawing Toolbar (dọc bên trái) ── */}
+      <DrawingToolbar
+        activeTool={activeTool}
+        onToolChange={setActiveTool}
+        onAction={handleAction}
+        drawingColor={drawingColor}
+        onColorChange={setDrawingColor}
+        lineWidth={lineWidth}
+        onLineWidthChange={setLineWidth}
+        lineStyle={lineStyle}
+        onLineStyleChange={setLineStyle}
+        hiddenAll={hiddenAll}
+        lockedAll={lockedAll}
+        drawingCount={drawingCount}
+        keepDrawing={keepDrawing}
+        onKeepDrawingChange={setKeepDrawing}
+        magnetMode={magnetMode}
+        onMagnetModeChange={setMagnetMode}
+      />
+
+      {/* ── Chart area (flex-col như cũ) ── */}
+      <div className="flex flex-col flex-1 min-w-0 h-full relative">
+
+        {/* ── Toolbar row ── */}
+        <div className="flex items-center gap-1 px-3 py-1.5 border-b border-[#1a1d26] flex-shrink-0 bg-[#0b0e11] flex-wrap">
+
+          <div className="flex items-center gap-0.5">
+            {ALL_INTERVALS.filter(i => PINNED.includes(i.value)).map(i => (
+              <button key={i.value} onClick={() => setInterval(i.value)}
+                className={`px-2.5 py-1 text-xs rounded transition-all ${interval === i.value ? 'bg-[#f0b90b1a] text-[#f0b90b] font-medium' : 'text-[#848e9c] hover:text-white hover:bg-[#1e2329]'
+                  }`}>
+                {i.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="w-px h-4 bg-[#2b3139] mx-1" />
+
+          <button onClick={() => setShowPicker(p => !p)}
+            className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded transition-all ${!isPinned ? 'bg-[#f0b90b1a] text-[#f0b90b] font-medium' : 'text-[#848e9c] hover:text-white hover:bg-[#1e2329]'
+              }`}>
+            {!isPinned ? currentLabel : 'Thêm'}
+            <svg width="10" height="10" viewBox="0 0 10 10">
+              <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" />
+            </svg>
+          </button>
+
+          <div className="w-px h-4 bg-[#2b3139] mx-1" />
+
+          <div className="flex items-center gap-1 flex-wrap">
+            {MA_CONFIGS.map(cfg => (
+              <button key={cfg.period}
+                onClick={() => setShowMA({ ...showMA, [cfg.period]: !showMA[cfg.period] })}
+                className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showMA[cfg.period] ? 'border-transparent font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'}`}
+                style={showMA[cfg.period] ? { color: cfg.color, background: cfg.color + '1a', borderColor: cfg.color + '44' } : {}}>
+                {cfg.label}
+              </button>
+            ))}
+
+            {EMA_CONFIGS.map(cfg => (
+              <button key={cfg.period}
+                onClick={() => setShowEMA({ ...showEMA, [cfg.period]: !showEMA[cfg.period] })}
+                className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showEMA[cfg.period] ? 'border-transparent font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'}`}
+                style={showEMA[cfg.period] ? { color: cfg.color, background: cfg.color + '1a', borderColor: cfg.color + '44' } : {}}>
+                {cfg.label}
+              </button>
+            ))}
+
+            <button onClick={() => setShowBB(!showBB)}
+              className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showBB ? 'bg-[#26a69a1a] text-[#26a69a] border-[#26a69a44] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+                }`}>
+              BB(20,2)
+            </button>
+
+            <button onClick={() => setShowRSI(!showRSI)}
+              className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showRSI ? 'bg-[#9c27b01a] text-[#ce93d8] border-[#9c27b044] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+                }`}>
+              RSI{RSI_PERIOD}
+            </button>
+
+            <button onClick={() => setShowMACD(!showMACD)}
+              className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showMACD ? 'bg-[#2196f31a] text-[#64b5f6] border-[#2196f344] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+                }`}>
+              MACD
+            </button>
+
+            <button onClick={() => setShowVolume(!showVolume)}
+              className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showVolume ? 'bg-[#4c525e1a] text-[#848e9c] border-[#4c525e44]' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+                }`}>
+              VOL
+            </button>
+          </div>
+
+          <div className="ml-auto flex items-center gap-2">
+            <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${market === 'futures' ? 'bg-[#f0b90b1a] text-[#f0b90b]' : 'bg-[#0ecb811a] text-[#0ecb81]'
+              }`}>
+              {market === 'futures' ? 'FUTURES' : 'SPOT'}
+            </span>
+          </div>
+        </div>
+
+        {/* ── Interval picker dropdown ── */}
+        {showPicker && (
+          <>
+            <div className="fixed inset-0 z-10" onClick={() => setShowPicker(false)} />
+            <div className="absolute top-10 left-3 z-20 bg-[#1e2329] border border-[#2b3139] rounded-lg shadow-2xl p-4 w-72">
+              {INTERVAL_GROUPS.map(group => (
+                <div key={group.label} className="mb-3 last:mb-0">
+                  <p className="text-[10px] text-[#5e6673] uppercase tracking-wider mb-2 font-medium">{group.label}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {group.items.map(i => (
+                      <button key={i.value}
+                        onClick={() => { setInterval(i.value); setShowPicker(false) }}
+                        className={`px-3 py-1.5 text-xs rounded transition-all ${interval === i.value ? 'bg-[#f0b90b] text-black font-semibold' : 'bg-[#2b3139] text-[#848e9c] hover:bg-[#363c45] hover:text-white'
+                          }`}>
+                        {i.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+
+              {/* ── Go to date button ── */}
+              <div className="mt-3 pt-3 border-t border-[#2b3139]">
+                <button
+                  onClick={() => { setShowPicker(false); setShowGoTo(true) }}
+                  title="Go to date"
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 text-[11px] text-[#848e9c] hover:text-white hover:bg-[#2b3139] rounded-lg transition-all border border-[#2b3139] hover:border-[#363c45]"
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <rect x="1" y="2" width="10" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+                    <path d="M4 1v2M8 1v2M1 5h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                  </svg>
+                  Go to date
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* ── OHLCV Tooltip ── */}
+        {tooltip && (
+          <div className="absolute top-10 left-3 z-10 pointer-events-none">
+            <div className="flex items-center gap-3 bg-[#1e2329cc] backdrop-blur-sm px-3 py-1.5 rounded text-[11px] border border-[#2b3139] flex-wrap">
+              <span className={tooltip.isUp ? 'text-[#0ecb81]' : 'text-[#f6465d]'}>O <span className="text-[#eaecef]">{fmtPrice(tooltip.open)}</span></span>
+              <span className="text-[#0ecb81]">H <span className="text-[#eaecef]">{fmtPrice(tooltip.high)}</span></span>
+              <span className="text-[#f6465d]">L <span className="text-[#eaecef]">{fmtPrice(tooltip.low)}</span></span>
+              <span className={tooltip.isUp ? 'text-[#0ecb81]' : 'text-[#f6465d]'}>C <span className="text-[#eaecef]">{fmtPrice(tooltip.close)}</span></span>
+              <span className="text-[#5e6673]">V <span className="text-[#848e9c]">{fmtVol(tooltip.volume)}</span></span>
+              {MA_CONFIGS.map(cfg =>
+                showMA[cfg.period] && tooltip.maValues?.[cfg.period] ? (
+                  <span key={cfg.period} style={{ color: cfg.color }}>
+                    {cfg.label} <span className="text-[#eaecef]">{fmtPrice(tooltip.maValues[cfg.period])}</span>
+                  </span>
+                ) : null
+              )}
+              {EMA_CONFIGS.map(cfg =>
+                showEMA[cfg.period] && tooltip.emaValues?.[cfg.period] ? (
+                  <span key={cfg.period} style={{ color: cfg.color }}>
+                    {cfg.label} <span className="text-[#eaecef]">{fmtPrice(tooltip.emaValues[cfg.period])}</span>
+                  </span>
+                ) : null
+              )}
+              {showBB && tooltip.bbValues && (
+                <>
+                  <span className="text-[#26a69a]">BB↑ <span className="text-[#eaecef]">{fmtPrice(tooltip.bbValues.upper)}</span></span>
+                  <span className="text-[#26a69a66]">BB— <span className="text-[#eaecef]">{fmtPrice(tooltip.bbValues.middle)}</span></span>
+                  <span className="text-[#26a69a]">BB↓ <span className="text-[#eaecef]">{fmtPrice(tooltip.bbValues.lower)}</span></span>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Main chart + Canvas overlay ─────────────────────────────────── */}
+        {/*
+          Container này cần position: relative để canvas absolute hoạt động.
+          Canvas overlay nằm trên chart, nhận pointer-events khi đang vẽ.
+        */}
+        <div
+          className="relative w-full"
+          style={{ flex: '1 1 0', minHeight: 0 }}
+        >
+          {/* ── Loading older candles banner ── */}
+          {isLoadingOlder && (
+            <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+              <div className="flex items-center gap-2 bg-[#1e2329dd] backdrop-blur-sm border border-[#2b3139] rounded-full px-3 py-1.5 shadow-lg">
+                <svg className="animate-spin w-3 h-3 text-[#f0b90b]" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" />
+                  <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                </svg>
+                <span className="text-[10px] text-[#848e9c]">Đang tải nến cũ hơn...</span>
+              </div>
+            </div>
+          )}
+
+          {/* Canvas overlay cho drawing tools — PHẢI ở trước mainContainerRef */}
+          <canvas
+            ref={canvasOverlayRef}
+            {...canvasProps}
+          />
+
+          {/* Main lightweight-chart */}
+          <div
+            ref={mainContainerRef}
+            className="w-full h-full"
+            style={{
+              cursor: isDrawingMode
+                ? 'none'              // Canvas overlay tự handle cursor khi vẽ
+                : isDragging ? 'grabbing' : 'crosshair',
+            }}
+            onMouseDown={() => { if (!isDrawingMode) setIsDragging(true) }}
+            onMouseUp={() => setIsDragging(false)}
+            onMouseLeave={() => setIsDragging(false)}
+          />
+        </div>
+
+        {/* ── RSI panel ── */}
+        <div
+          className="flex-shrink-0 border-t border-[#1a1d26] overflow-hidden transition-all duration-200"
+          style={{ height: showRSI ? `${panelHeightPct}%` : '0', minHeight: showRSI ? 70 : 0 }}
+        >
+          <div className="flex items-center gap-2 px-3 py-0.5 bg-[#0b0e11]">
+            <span className="text-[9px] text-[#9c27b0] font-medium">RSI({RSI_PERIOD})</span>
+            <span className="text-[9px] text-[#f6465d66]">— OB 70</span>
+            <span className="text-[9px] text-[#0ecb8166]">— OS 30</span>
+          </div>
+          <div
+            ref={rsiContainerRef}
+            className="w-full"
+            style={{
+              height: 'calc(100% - 20px)',
+              cursor: isDragging ? 'grabbing' : 'crosshair',
+            }}
+            onMouseDown={() => setIsDragging(true)}
+            onMouseUp={() => setIsDragging(false)}
+            onMouseLeave={() => setIsDragging(false)}
+          />
+        </div>
+
+        {/* ── MACD panel ── */}
+        <div
+          className="flex-shrink-0 border-t border-[#1a1d26] overflow-hidden transition-all duration-200"
+          style={{ height: showMACD ? `${panelHeightPct}%` : '0', minHeight: showMACD ? 70 : 0 }}
+        >
+          <div className="flex items-center gap-3 px-3 py-0.5 bg-[#0b0e11]">
+            <span className="text-[9px] text-[#64b5f6] font-medium">MACD({MACD_FAST},{MACD_SLOW},{MACD_SIGNAL})</span>
+            <span className="text-[9px] text-[#2196f3]">— MACD</span>
+            <span className="text-[9px] text-[#ff9800]">— Signal</span>
+            <span className="text-[9px] text-[#848e9c]">█ Hist</span>
+            {macdTooltip && (
+              <span className="ml-1 flex items-center gap-2">
+                <span className="text-[9px] text-[#2196f3]">M <span className="text-[#eaecef]">{fmtMacd(macdTooltip.macd)}</span></span>
+                <span className="text-[9px] text-[#ff9800]">S <span className="text-[#eaecef]">{fmtMacd(macdTooltip.signal)}</span></span>
+                <span className={`text-[9px] ${(macdTooltip.hist ?? 0) >= 0 ? 'text-[#0ecb81]' : 'text-[#f6465d]'}`}>
+                  H <span className="text-[#eaecef]">{fmtMacd(macdTooltip.hist)}</span>
+                </span>
+              </span>
+            )}
+          </div>
+          <div
+            ref={macdContainerRef}
+            className="w-full"
+            style={{
+              height: 'calc(100% - 20px)',
+              cursor: isDragging ? 'grabbing' : 'crosshair',
+            }}
+            onMouseDown={() => setIsDragging(true)}
+            onMouseUp={() => setIsDragging(false)}
+            onMouseLeave={() => setIsDragging(false)}
+          />
+        </div>
+
+      </div>
+
+      {/* ── Go to Date modal ── */}
+      {showGoTo && (
+        <GoToDateModal
+          onClose={() => setShowGoTo(false)}
+          onGoto={(targetUnixSec) => {
+            const chart = mainChartRef.current
+            if (!chart) return
+            // lightweight-charts: scrollToPosition / scrollToRealTime / setVisibleRange
+            // Dùng setVisibleRange để nhảy đến mốc thời gian, giữ 100 nến visible
+            try {
+              chart.timeScale().scrollToPosition(0, false)
+              // getVisibleLogicalRange để tính số nến đang hiện
+              const range = chart.timeScale().getVisibleLogicalRange()
+              const width = range ? (range.to - range.from) : 100
+              // Tìm index của nến gần nhất với targetUnixSec
+              const data = klineDataRef.current
+              if (data.length === 0) return
+              let idx = data.findIndex(d => d.time >= targetUnixSec)
+              if (idx < 0) idx = data.length - 1
+              // Set logical range: center tại idx
+              chart.timeScale().setVisibleLogicalRange({
+                from: idx - width / 2,
+                to: idx + width / 2,
+              })
+            } catch (e) {
+              console.warn('[GoTo]', e)
+            }
+          }}
+        />
+      )}
+    </div>
+  )
+}

@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Chart cursor — override lightweight-charts internal cursor ──────────── */
+/* Khi đang drag (grabbing), override mọi cursor mà lightweight-charts set */
+.chart-grabbing,
+.chart-grabbing * {
+  cursor: grabbing !important;
+}
+
+/* Mặc định crosshair khi hover vào chart area */
+.tv-lightweight-charts canvas {
+  cursor: crosshair;
+}
+
+/* lightweight-charts v4 render logo dưới dạng <a> tag trong canvas container */
+.tv-lightweight-charts a,
+.tv-lightweight-charts > a,
+a[href*="tradingview.com"] {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* ── Custom Scrollbar (sidebar coin list) ────────────────────────────────── */
+
+/* Firefox */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: #2b3139 transparent;
+}
+
+/* Chrome / Safari / Edge */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 3px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #2b3139;
+  border-radius: 99px;
+  transition: background 0.2s;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: #f0b90b88;
+}
+
+/* Ẩn scrollbar khi không hover vào sidebar */
+.scrollbar-thin:not(:hover)::-webkit-scrollbar-thumb {
+  background: transparent;
+}

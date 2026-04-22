@@ -1,0 +1,144 @@
+Đây là file active-context-v11.md theo dõi toàn bộ dự án Binance Tracker.
+Hãy đọc kỹ phần "Bug đã sửa" trước khi viết code mới.
+Nhiệm vụ hôm nay: [mô tả tính năng cần làm]
+
+
+## 1. 📊 Công cụ vẽ (Drawing Tools) — Toolbar trái
+
+### Đường & Kênh
+- **Trend Line** — đường xu hướng 2 điểm
+- **Trend Angle** — đường xu hướng có góc độ
+- **Horizontal Line** — đường ngang vô cực
+- **Horizontal Ray** — đường ngang 1 chiều
+- **Vertical Line** — đường dọc
+- **Cross Line** — đường thập giá
+- **Arrow** — mũi tên
+- **Ray** — tia từ 1 điểm
+- **Extended Line** — đường kéo dài 2 chiều
+- **Info Line** — đường có thông tin giá/thời gian/% thay đổi
+- **Parallel Channel** — kênh giá song song
+- **Flat Top/Bottom Channel**
+- **Disjoint Channel**
+- **Regression Trend**
+
+### Fibonacci
+- **Fibonacci Retracement** — thoái lùi Fibo
+- **Fibonacci Extension** — mở rộng Fibo
+- **Fibonacci Speed Resistance Fan**
+- **Fibonacci Time Zone**
+- **Fibonacci Channel**
+- **Fibonacci Spiral**
+- **Fibonacci Wedge**
+- **Fibonacci Circles**
+- **Pitchfork** (Andrews' Pitchfork)
+- **Schiff Pitchfork**
+- **Modified Schiff Pitchfork**
+
+### Hình học
+- **Rectangle** — hình chữ nhật
+- **Rotated Rectangle**
+- **Ellipse** — hình elip
+- **Triangle** — tam giác
+- **Arc**
+- **Brush** — cọ vẽ tự do
+
+### Elliott Wave & Pattern
+- **Elliott Wave** (ABCDE, 12345)
+- **XABCD Pattern**
+- **ABCD Pattern**
+- **Head & Shoulders**
+- **Triangle Pattern**
+- **Cypher Pattern**
+- **Three Drives**
+
+### Gann
+- **Gann Box**
+- **Gann Square Fixed**
+- **Gann Fan**
+
+### Annotation
+- **Text** — chú thích văn bản
+- **Callout** — bong bóng chú thích
+- **Price Label** — nhãn giá
+- **Price Note**
+- **Arrow Mark** — mũi tên đánh dấu
+- **Flag** — cờ đánh dấu điểm quan trọng
+- **Bookmark**
+
+---
+
+## 2. 📐 Công cụ đo lường
+
+- **Measure** (`Shift + Click`) — đo % thay đổi, số nến, thời gian giữa 2 điểm
+- **Date Range** — chọn khoảng thời gian
+- **Price Range** — đo khoảng giá
+- **Date & Price Range** — kết hợp cả 2
+- **Bars Pattern** — copy pattern nến để so sánh
+
+---
+
+## 3. 🔍 Điều hướng & Xem giá
+
+- **Zoom In/Out** — phóng to thu nhỏ
+- **Scroll** — cuộn trái/phải
+- **Auto Scale** — tự căn giá vào màn hình
+- **Lock Scale** — khóa tỉ lệ giá
+- **Reset Chart** — về mặc định
+- **Go to date** — nhảy đến ngày cụ thể
+- **Go to live** — về hiện tại
+- **Magnet Mode** — snap cursor vào OHLC gần nhất
+- **Crosshair** — hiện tọa độ giá/thời gian
+
+---
+
+## 4. ⚙️ Quản lý bản vẽ
+
+- **Lock all** — khóa tất cả drawing
+- **Hide all** (`Ctrl+Alt+H`) — ẩn tất cả
+- **Show all** — hiện lại
+- **Delete all** — xóa tất cả
+- **Object Tree / List** — danh sách tất cả objects đã vẽ
+- **Continue drawing** — vẽ tiếp tool hiện tại
+- **Stay in drawing mode** — không thoát tool sau khi vẽ xong
+
+---
+
+## 5. 🔔 Alert & Notification
+
+- **Price Alert** — báo khi giá chạm ngưỡng
+- **Alert on Drawing** — báo khi giá cắt đường đã vẽ (trend line, horizontal...)
+- **Alert on Indicator** — báo khi RSI vượt 70, MACD cross...
+- **Webhook** — gửi signal ra ngoài
+
+---
+
+## 6. 📈 Loại biểu đồ
+
+- Candlestick / Heikin Ashi
+- Bar Chart / OHLC
+- Line / Area
+- Baseline
+- Hollow Candle
+- Volume Candle
+- Renko / Kagi / Point & Figure / Range
+- Column
+
+---
+
+## 7. 🧮 Indicators
+
+TradingView có **100+ built-in indicators** + Pine Script để tự viết:
+- Trend: MA, EMA, VWAP, Ichimoku, Supertrend, Parabolic SAR
+- Momentum: RSI, MACD, Stochastic, CCI, Williams %R, MFI
+- Volatility: BB, ATR, Keltner Channel, Donchian
+- Volume: OBV, VWAP, Volume Profile, CVD
+- Custom: Pine Script editor
+
+---
+
+## 8. 🖥️ Layout & Multi-chart
+
+- **Multi-pane** — chia layout 2/4/6/8 chart cùng lúc
+- **Compare** — overlay nhiều coin trên 1 chart
+- **Sync crosshair** — đồng bộ crosshair giữa các chart
+- **Template** — lưu layout indicator
