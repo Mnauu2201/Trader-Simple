@@ -31,7 +31,7 @@ Xây dựng một **web dashboard cá nhân** để theo dõi giá coin realtime
 Binance WebSocket API  ──────────────────────────────────────────────────
         │ @ticker (giá sidebar)      │ @kline (chart)
         │ @depth5 (order book)       │ @aggTrade (recent trades)
-        │ @markPrice (funding rate)
+        │ @markPrice (funding rate)  │ !forceOrder@arr (liquidations)
         ▼
    Frontend App (React 18 + Vite)
         │
@@ -86,8 +86,13 @@ Futures Base: https://fapi.binance.com   (fallback: fapi1, fapi2)
 | `GET /api/v3/ticker/24hr` | Thống kê 24h Spot |
 | `GET /fapi/v1/ticker/24hr` | Thống kê 24h Futures |
 | `GET /fapi/v1/premiumIndex` | Mark price + funding rate |
-| `GET /fapi/v1/fundingRate` | Lịch sử funding rate |
+| `GET /fapi/v1/fundingRate` | Lịch sử funding rate (100 chu kỳ) |
 | `GET /fapi/v1/openInterest` | Open Interest (poll 30s) |
+| `GET /fapi/v1/openInterestHist` | Open Interest history (infinite scroll) |
+| `GET /futures/data/takerlongshortRatio` | Taker Buy/Sell Volume history |
+| `GET /futures/data/globalLongShortAccountRatio` | L/S Ratio — Global Accounts |
+| `GET /futures/data/topLongShortAccountRatio` | L/S Ratio — Top Trader Accounts |
+| `GET /futures/data/topLongShortPositionRatio` | L/S Ratio — Top Trader Positions |
 
 **WebSocket API**
 ```
@@ -102,6 +107,7 @@ Futures WS: wss://fstream.binance.com/ws/
 | `@depth5@100ms` | Order Book top 5 bid/ask | 100ms |
 | `@aggTrade` | Recent Trades (30 gần nhất) | Per trade |
 | `@markPrice` | Funding rate + mark price | 3s |
+| `!forceOrder@arr` | Liquidation events (Futures) | Per event |
 
 **Lưu ý:** Binance REST API đôi khi bị block ở Việt Nam. Dự án dùng 3 URL fallback cho cả Spot và Futures, với retry tối đa 3 lần mỗi request quan trọng.
 
@@ -128,7 +134,7 @@ binance-tracker/
 │   │
 │   ├── components/
 │   │   ├── AlertPanel.jsx        — Price alert UI + SoundSettings
-│   │   ├── ChartPanel.jsx        — Chart chính: nến + MA/EMA/BB/RSI/MACD/VOL/OI/TVol/CVD
+│   │   ├── ChartPanel.jsx        — Chart chính: nến + MA/EMA/BB/RSI/MACD/VOL/OI/TVol/CVD/Liq/FR
 │   │   ├── CoinList.jsx          — Sidebar: coin list + tab Thị trường/Tăng/Giảm/Watchlist
 │   │   ├── DrawingToolbar.jsx    — Toolbar vẽ tay: TrendLine, HLine, FibRetracement
 │   │   ├── IntervalSelector.jsx  — (deprecated, không dùng nữa)
@@ -138,20 +144,22 @@ binance-tracker/
 │   │   └── RecentTradesPanel.jsx — Recent trades list (30 aggTrades)
 │   │
 │   ├── hooks/
-│   │   ├── useAlertChecker.js    — Background checker alert (soundRef pattern)
-│   │   ├── useBinanceWS.js       — WS ticker stream (batch 40 symbols/connection)
-│   │   ├── useDrawingTools.js    — Drawing tools state + canvas overlay logic
-│   │   ├── useFundingRate.js     — WS markPrice + OI polling (auto-reconnect)
-│   │   ├── useKlineData.js       — WS + REST kline (retry 3 lần + reconnect)
-│   │   ├── useLongShortRatio.js  — REST poll 30s, lịch sử 24 điểm Long/Short
-│   │   ├── useOIHistory.js       — REST fetch OI history, infinite scroll, poll 5m
-│   │   ├── useOrderBook.js       — WS @depth5 + RAF batch + auto-reconnect
-│   │   ├── useRecentTrades.js    — WS @aggTrade + buffer 30 + RAF batch
-│   │   └── useTakerVolume.js     — REST fetch Taker Buy/Sell Vol, infinite scroll, poll 1m
+│   │   ├── useAlertChecker.js       — Background checker alert (soundRef pattern)
+│   │   ├── useBinanceWS.js          — WS ticker stream (batch 40 symbols/connection)
+│   │   ├── useDrawingTools.js       — Drawing tools state + canvas overlay logic
+│   │   ├── useFundingRate.js        — WS markPrice + OI polling (auto-reconnect)
+│   │   ├── useFundingRateHistory.js — REST fetch 100 chu kỳ funding rate, poll 8h  ← v20
+│   │   ├── useKlineData.js          — WS + REST kline (retry 3 lần + reconnect)
+│   │   ├── useLiquidations.js       — WS !forceOrder@arr, lọc $10K, auto-reconnect
+│   │   ├── useLongShortRatio.js     — REST poll 30s, lịch sử 24 điểm Long/Short
+│   │   ├── useOIHistory.js          — REST fetch OI history, infinite scroll, poll 5m
+│   │   ├── useOrderBook.js          — WS @depth5 + RAF batch + auto-reconnect
+│   │   ├── useRecentTrades.js       — WS @aggTrade + buffer 30 + RAF batch
+│   │   └── useTakerVolume.js        — REST fetch Taker Buy/Sell Vol, infinite scroll, poll 1m
 │   │
 │   ├── store/
 │   │   ├── alertStore.js         — Alerts list (persist localStorage)
-│   │   ├── chartStore.js         — Symbol, interval, market, indicators, alertSound, showCVD
+│   │   ├── chartStore.js         — Symbol, interval, market, indicators, showFR  ← v20
 │   │   ├── marketStore.js        — Prices (_prices module-level + RAF batch)
 │   │   └── watchlistStore.js     — Watchlist cá nhân (persist localStorage, max 50 coin)
 │   │
@@ -236,6 +244,27 @@ Binance WebSocket @markPrice   → update markPrice/indexPrice/fundingRate realt
   (auto-reconnect 5s nếu bị drop)
 ```
 
+### Funding Rate History (Futures only) — v20
+
+```
+Binance REST GET /fapi/v1/fundingRate?limit=100
+  → fetch ngay khi mount (symbol + market = futures)
+  → poll mỗi 8h (funding settle 3 lần/ngày: 00:00 / 08:00 / 16:00 UTC)
+  → convert sang % (raw × 100)
+  → HistogramSeries: xanh nếu ≥ 0, đỏ nếu < 0
+  → sync TimeRange với main chart
+```
+
+### Liquidations (Futures only) — v19
+
+```
+Binance WebSocket !forceOrder@arr (Futures global stream)
+  onmessage → lọc usdValue ≥ $10K
+            → snap time về nến gần nhất (klineDataRef)
+            → setMarkers() trên candleSeries
+  Max 200 markers, BUY liq = arrowUp đỏ, SELL liq = arrowDown xanh
+```
+
 ---
 
 ## 5. Mô tả từng file
@@ -261,11 +290,23 @@ Chạy nền ở root App. Dùng `soundRef` (useRef) để đọc alertVolume/al
 ### `src/hooks/useFundingRate.js`
 REST snapshot + WS `@markPrice` realtime + OI polling mỗi 30s. `cancelledRef` pattern để tránh update sau cleanup.
 
+### `src/hooks/useFundingRateHistory.js` ← v20
+REST `GET /fapi/v1/fundingRate?limit=100` với 3-URL fallback. Convert fundingRate sang % (×100). Poll mỗi 8h (funding settle 3 lần/ngày). `cancelledRef` pattern.
+
+### `src/hooks/useLiquidations.js` — v19
+WS `!forceOrder@arr` (Futures global liquidation stream). Lọc events có giá trị USD ≥ $10K (tránh noise). Auto-reconnect 5s với `cancelledRef` pattern.
+
+### `src/hooks/useOIHistory.js`
+REST fetch Open Interest history, infinite scroll backward (load thêm dữ liệu cũ khi kéo chart sang trái), poll mỗi 5 phút. Sync TimeRange với main chart.
+
+### `src/hooks/useTakerVolume.js`
+REST fetch Taker Buy/Sell Volume từ endpoint `/futures/data/takerlongshortRatio`, infinite scroll backward, poll mỗi 1 phút. Sell volume vẽ âm (−sellVol) để tách biệt trực quan.
+
 ### `src/store/marketStore.js`
 Core perf pattern: `_prices` object sống ngoài Zustand (mutate in-place, O(1)), Zustand chỉ giữ `_tick`. RAF batch tối đa 60 re-render/giây dù nhận bao nhiêu WS message.
 
 ### `src/store/chartStore.js`
-Zustand + persist: symbol, interval, market, showMA, showEMA, showRSI, showVolume, showMACD, showBB, alertVolume, alertTone.
+Zustand + persist: symbol, interval, market, showMA, showEMA, showRSI, showVolume, showMACD, showBB, showOI, showTakerVol, showCVD, showLiq, showFR, alertVolume, alertTone.
 
 ### `src/store/alertStore.js`
 Zustand + persist: danh sách alerts với trạng thái triggered. `nextId` dùng timestamp để tránh trùng sau reload.
@@ -277,7 +318,7 @@ Root layout. `rightPanel` state (null | 'orderbook' | 'trades' | 'alerts') kiể
 Sidebar trái. 3 tab: Thị trường (search + sort + 60→all), Tăng (top 20 gainers), Giảm (top 20 losers). Gainers/Losers dùng snapshot throttle 3s — không sort 300 coin mỗi WS tick.
 
 ### `src/components/ChartPanel.jsx`
-Chart chính với lightweight-charts v5. Indicators: MA(20/50/200), EMA(9/21), BB(20,2), RSI(14), MACD(12,26,9), Volume. OHLCV tooltip khi hover. Sync timescale giữa main/RSI/MACD panels.
+Chart chính với lightweight-charts v5. Indicators: MA(20/50/200), EMA(9/21), BB(20,2), RSI(14), MACD(12,26,9), Volume. Sub-panels: OI History, Taker Volume, CVD, Funding Rate History (v20). Liquidation markers trên chart (v19). OHLCV tooltip khi hover. Sync timescale giữa main/RSI/MACD/OI/TVol/CVD/FR panels.
 
 ### `src/components/PriceCard.jsx`
 Header bar giá. Futures: thêm Mark Price, Index Price, Funding Rate%, countdown đến lần funding tiếp theo, Open Interest, Funding Rate History Sparkline (10 chu kỳ).
@@ -302,12 +343,6 @@ Quản lý state drawing tools (active tool, danh sách shapes đã vẽ). Xử 
 
 ### `src/hooks/useLongShortRatio.js`
 REST poll 30s, lấy lịch sử 24 điểm Long/Short Ratio từ 3 endpoint Binance Futures. Dùng `Promise.allSettled` để xử lý endpoint `topLongShort` chỉ available cho ~20 coin lớn.
-
-### `src/hooks/useOIHistory.js`
-REST fetch Open Interest history, infinite scroll backward (load thêm dữ liệu cũ khi kéo chart sang trái), poll mỗi 5 phút. Sync TimeRange với main chart.
-
-### `src/hooks/useTakerVolume.js`
-REST fetch Taker Buy/Sell Volume từ endpoint `/futures/data/takerlongshortRatio`, infinite scroll backward, poll mỗi 1 phút. Sell volume vẽ âm (−sellVol) để tách biệt trực quan.
 
 ### `src/store/watchlistStore.js`
 Zustand + persist localStorage: danh sách coin đã pin (tối đa 50). Cung cấp `togglePin`, `isPinned`. WS stream riêng cho watchlist ngoài top 180.

@@ -1,4 +1,4 @@
-// src/store/chartStore.js — v19: thêm showLiq (Liquidation markers)
+// src/store/chartStore.js — v20: thêm showFR (Funding Rate History Chart)
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
@@ -20,6 +20,7 @@ export const useChartStore = create(
       showTakerVol: false,
       showCVD: false,
       showLiq: false,   // Liquidation markers trên chart (Futures only)
+      showFR: false,    // Funding Rate History chart (Futures only)
 
       // Alert sound settings
       alertVolume: 0.4,          // 0.0 – 1.0
@@ -38,6 +39,7 @@ export const useChartStore = create(
       setShowTakerVol: (v) => set({ showTakerVol: v }),
       setShowCVD: (v) => set({ showCVD: v }),
       setShowLiq: (v) => set({ showLiq: v }),   // ← v19
+      setShowFR:  (v) => set({ showFR: v }),    // ← v20
       setAlertVolume: (v) => set({ alertVolume: v }),
       setAlertTone: (v) => set({ alertTone: v }),
     }),
@@ -57,6 +59,7 @@ export const useChartStore = create(
         showTakerVol: state.showTakerVol,
         showCVD: state.showCVD,
         showLiq: state.showLiq,   // ← v19
+        showFR: state.showFR,     // ← v20
         alertVolume: state.alertVolume,
         alertTone: state.alertTone,
       }),

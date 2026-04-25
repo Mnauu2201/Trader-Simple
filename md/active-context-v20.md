@@ -1,5 +1,5 @@
-# Active Context v19
-## Trạng thái: Cập nhật lần 19 ✅
+# Active Context v20
+## Trạng thái: Cập nhật lần 20 ✅
 > **Phiên làm việc tiếp theo:** Đọc mục "📦 Gửi file gì trong phiên tới" ở cuối file này trước khi bắt đầu.
 
 ---
@@ -132,6 +132,15 @@
 | **Toggle button Liq trong toolbar (chỉ Futures)** | **v19** |
 | **Persist showLiq trong chartStore** | **v19** |
 | **Auto-reconnect WS 5s (cancelledRef pattern)** | **v19** |
+| **useFundingRateHistory.js — REST fetch 100 chu kỳ funding rate** | **v20** |
+| **Funding Rate History panel — HistogramSeries xanh/đỏ theo sign** | **v20** |
+| **Toggle button FR trong toolbar (chỉ Futures)** | **v20** |
+| **Persist showFR trong chartStore** | **v20** |
+| **Poll mỗi 8h (funding settle 3 lần/ngày)** | **v20** |
+| **Header hiện rate% + nhãn "Long trả Short" / "Short trả Long"** | **v20** |
+| **Sync TimeRange với main chart (pattern giống OI/TVol)** | **v20** |
+| **3-URL fallback (fapi/fapi1/fapi2)** | **v20** |
+| **frHistoryRef để init chart trước khi data về** | **v20** |
 
 ---
 
@@ -172,63 +181,34 @@ get prices() { return _prices }
 
 ---
 
-### BUG #5 — RSI overbought/oversold lines biến mất (v8)
-**Fix đúng:** Tạo PriceLine SAU khi `setData()` xong trên RSI series.
+### BUG #5 — Sub-chart (OI/TVol/CVD/FR) không hiện vì DOM chưa mount (v16)
+**Fix đúng:** `setTimeout(0)` để defer createChart — đảm bảo React mount DOM trước.
+**Rule:** Mọi sub-chart đều dùng `setTimeout(0)` trong useEffect.
 
 ---
 
-### BUG #6 — Sidebar WS mở 300 connections (v3/v8)
-**Fix đúng:** Max 40 symbols/connection, stagger 200ms/batch.
+### BUG #6 — Sub-chart sync timescale không khớp với main chart (v16)
+**Fix đúng:** Dùng `subscribeVisibleTimeRangeChange` + `setVisibleRange` (UTC time).
+**Rule:** KHÔNG dùng LogicalRange để sync giữa 2 chart có số data points khác nhau.
 
 ---
 
-### BUG #7 — FundingCountdown gây re-render PriceCard mỗi giây (v9)
-**Fix đúng:** Tách FundingCountdown thành component riêng với state local.
-**Rule:** Component có `setInterval` PHẢI là component riêng với state local.
+### BUG #7 — Sub-chart fitContent() gây nhảy view khi setData (v16)
+**Fix đúng:** Sau `series.setData()`, gọi `setVisibleRange(mainChart.timeScale().getVisibleRange())`.
+**Rule:** Không bao giờ gọi `fitContent()` trên sub-chart — luôn sync từ main chart.
 
 ---
 
-### BUG #8 — useFundingRate WS không reconnect (v11 fix)
-**Fix đúng:**
-```js
-const cancelledRef = useRef(false)
-ws.onclose = () => {
-  if (cancelledRef.current) return
-  reconnTimRef.current = setTimeout(() => { if (!cancelledRef.current) connectWS() }, 5000)
-}
-```
+### BUG #8 — Funding Rate WS frozen sau vài phút (v11)
+**Fix đúng:** `ws.onclose` phải reconnect sau 5s (trước chỉ cleanup).
+**Rule:** Mọi WS hook PHẢI có auto-reconnect trong `onclose`.
 
 ---
 
-### BUG #9 — alertVolume/alertTone hardcode không đổi được (v12 fix)
-**Fix đúng:**
-```js
-const soundRef = useRef({ volume: alertVolume, tone: alertTone })
-useEffect(() => { soundRef.current = { volume: alertVolume, tone: alertTone } }, [alertVolume, alertTone])
-```
-**Rule:** Mọi value cần đọc trong closure async/setInterval PHẢI dùng `useRef` pattern.
-
----
-
-### BUG #10 — OI/TVol chart không sync đúng timescale (v16 fix)
-**Fix đúng:** Dùng `subscribeVisibleTimeRangeChange` + `setVisibleRange` (UTC time range).
-**Rule:** Sub-chart sync TIME range, KHÔNG sync logical range — logical index không tương đương giữa 2 chart có data length khác nhau.
-
----
-
-### BUG #11 — TVol endpoint CORS + 404 (v17 fix)
-**Fix đúng:**
-- Vite proxy: `/futures-data` → `https://fapi.binance.com`
-- Đúng tên endpoint: `/futures/data/takerlongshortRatio` (không phải `takerbuysellevol`)
-- Dùng `import.meta.env.DEV` để switch URL dev/prod
-
----
-
-## ⚡ Performance Rules — KHÔNG ĐƯỢC VI PHẠM
+## 🏗️ Kiến trúc & Performance Rules
 
 | Rule | Lý do |
 |---|---|
-| `marketStore` dùng `_prices` module-level, Zustand chỉ giữ `_tick` | spread 300 keys × 60fps = lag |
 | `updatePrice` batch qua `requestAnimationFrame` | tối đa 60 notify/giây |
 | Không tách `CoinRow` thành component riêng | 300 component instance mỗi re-render |
 | Gainers/Losers dùng snapshot throttle 3s | không sort 300 coin mỗi frame |
@@ -238,6 +218,7 @@ useEffect(() => { soundRef.current = { volume: alertVolume, tone: alertTone } },
 | Open Interest poll mỗi 30s (PriceCard) | không có WS stream OI |
 | OI History poll mỗi 5 phút | data thay đổi chậm, tránh rate limit |
 | Taker Volume poll mỗi 1 phút | cập nhật nhanh hơn OI nhưng không có WS |
+| Funding Rate History poll mỗi 8h | funding settle 3 lần/ngày |
 | EMA state lưu qua `emaStateRef` | O(1) per tick |
 | CVD state lưu qua `cvdStateRef` | O(1) per tick |
 | alertVolume/alertTone đọc qua `soundRef` (useRef) | tránh stale closure |
@@ -248,10 +229,11 @@ useEffect(() => { soundRef.current = { volume: alertVolume, tone: alertTone } },
 | StarButton tách component riêng | tránh toàn list re-render khi hover star |
 | L/S Ratio dùng Promise.allSettled | topLongShort chỉ có cho coin lớn |
 | L/S + OI History poll 30s/5m | không có WS stream, tránh rate limit |
-| Sub-chart (OI/TVol/CVD) dùng setTimeout(0) để init | đảm bảo DOM mount trước khi createChart |
+| Sub-chart (OI/TVol/CVD/FR) dùng setTimeout(0) để init | đảm bảo DOM mount trước khi createChart |
 | Sub-chart sync TimeRange (UTC), không sync LogicalRange | LogicalRange không tương đương giữa 2 chart có data length khác nhau |
 | Sub-chart setData → setVisibleRange từ main chart | không fitContent() |
 | CVD O(1): chỉ tính delta của nến hiện tại | không recalc toàn bộ mỗi WS tick |
+| frHistoryRef giữ data mới nhất cho setTimeout callback | tránh stale closure trong init chart |
 
 ---
 
@@ -267,6 +249,7 @@ useEffect(() => { soundRef.current = { volume: alertVolume, tone: alertTone } },
 | CVD | ChartPanel.jsx | `calcCVDFull` khi load/prepend, O(1) per tick via `cvdStateRef` |
 | OI History | useOIHistory.js | REST fetch, infinite scroll backward, poll 5m |
 | Taker Volume | useTakerVolume.js | REST fetch, infinite scroll backward, poll 1m |
+| Funding Rate History | useFundingRateHistory.js | REST fetch 100 points, poll 8h |
 
 ---
 
@@ -277,7 +260,7 @@ src/
 ├── components/
 │   ├── App.jsx
 │   ├── CoinList.jsx
-│   ├── ChartPanel.jsx        — v19: +useLiquidations, +liqMarkersRef, +Liq button toolbar
+│   ├── ChartPanel.jsx        — v20: +useFundingRateHistory, +FR panel, +FR button toolbar
 │   ├── PriceCard.jsx
 │   ├── AlertPanel.jsx
 │   ├── OrderBookPanel.jsx
@@ -289,6 +272,7 @@ src/
 │   ├── useKlineData.js       — v18: +takerBuyVol field trong WS candle (k.V)
 │   ├── useAlertChecker.js
 │   ├── useFundingRate.js
+│   ├── useFundingRateHistory.js  — v20: REST 100 chu kỳ, poll 8h, cancelledRef pattern
 │   ├── useOrderBook.js
 │   ├── useRecentTrades.js
 │   ├── useLongShortRatio.js
@@ -298,7 +282,7 @@ src/
 │   └── useLiquidations.js    — v19: WS !forceOrder@arr, lọc $10K, auto-reconnect
 ├── store/
 │   ├── marketStore.js
-│   ├── chartStore.js         — v19: +showLiq, +setShowLiq, +persist showLiq
+│   ├── chartStore.js         — v20: +showFR, +setShowFR, persist showFR
 │   ├── alertStore.js
 │   └── watchlistStore.js
 ├── services/
@@ -321,27 +305,11 @@ src/
 - v17: Taker Buy/Sell Volume Panel (dual histogram, sync, infinite scroll)
 - v18: CVD — Cumulative Volume Delta (AreaSeries, O(1) update, sync timescale)
 - v19: Liquidation Tracker (WS markers tam giác, lọc $10K, toggle Liq button)
+- v20: Funding Rate History Chart (HistogramSeries xanh/đỏ, 100 chu kỳ, sync timescale)
 
 ---
 
-### 🔲 Tiếp theo — Priority cao (v20)
-
-#### [PRIORITY 1] Funding Rate Full Chart
-**Mục đích:** Xem lịch sử 100 chu kỳ funding rate dạng bar chart thay vì chỉ sparkline 10 điểm.
-
-**Files cần tạo/sửa:**
-- `src/hooks/useFundingRateHistory.js` — REST `GET /fapi/v1/fundingRate?limit=100`
-- `ChartPanel.jsx` — thêm panel BarSeries vàng, sync timescale, toggle button `FR`
-
-**Notes:**
-- Endpoint: `GET https://fapi.binance.com/fapi/v1/fundingRate?symbol=BTCUSDT&limit=100`
-- Response: `[{ symbol, fundingRate, fundingTime }]`
-- Chỉ Futures — tương tự pattern OI History (setTimeout(0) + sync TimeRange)
-- Màu bar: xanh nếu funding dương (long trả short), đỏ nếu âm (short trả long)
-
----
-
-### 🔲 Priority trung bình (v21+)
+### 🔲 Tiếp theo — Priority cao (v21)
 
 | Tính năng | Mô tả | Độ phức tạp |
 |---|---|---|
@@ -364,6 +332,7 @@ src/
 | TVol sellVol vẽ âm — axis label hiện số âm | Thấp | Có thể dùng 2 priceScale riêng nếu muốn đẹp hơn |
 | CVD reset về 0 mỗi lần load chart mới | Thấp | CVD là relative indicator, acceptable |
 | Liq markers snap về nến gần nhất (không snap chính xác giá) | Thấp | lightweight-charts markers không có price field, chỉ time |
+| FR History không sync ngược từ sub→main khi scroll FR chart | Thấp | handleScroll: false trên FR chart, acceptable |
 
 ---
 
@@ -371,14 +340,14 @@ src/
 
 **Bắt buộc gửi:**
 ```
-📄 active-context-v19.md     ← file này (bắt buộc, đọc trước tiên)
+📄 active-context-v20.md     ← file này (bắt buộc, đọc trước tiên)
 ```
 
 **Gửi nếu muốn sửa / thêm tính năng liên quan:**
 
 | Muốn làm gì | File cần gửi thêm |
 |---|---|
-| Thêm Funding Rate History Chart (v20) | `ChartPanel.jsx` + `useFundingRate.js` |
+| Sửa Funding Rate History Chart | `ChartPanel.jsx` + `useFundingRateHistory.js` |
 | Sửa Liquidation Tracker | `ChartPanel.jsx` + `useLiquidations.js` |
 | Sửa CVD | `ChartPanel.jsx` + `useKlineData.js` |
 | Sửa OI Chart | `ChartPanel.jsx` + `useOIHistory.js` |
@@ -394,7 +363,7 @@ src/
 
 **Gợi ý câu prompt mở đầu phiên tới:**
 ```
-Đây là active-context-v19.md theo dõi dự án Binance Tracker.
+Đây là active-context-v20.md theo dõi dự án Binance Tracker.
 Đọc kỹ "Bug đã sửa" trước khi viết code.
 Nhiệm vụ hôm nay: [mô tả]
 ```

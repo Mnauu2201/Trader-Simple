@@ -7,6 +7,7 @@ import { useDrawingTools } from '../hooks/useDrawingTools'
 import { useOIHistory } from '../hooks/useOIHistory'
 import { useTakerVolume } from '../hooks/useTakerVolume'
 import { useLiquidations } from '../hooks/useLiquidations'
+import { useFundingRateHistory } from '../hooks/useFundingRateHistory'
 
 // ── Interval groups ──────────────────────────────────────────────────────────
 const INTERVAL_GROUPS = [
@@ -484,6 +485,11 @@ export default function ChartPanel() {
   // Lưu danh sách markers để setMarkers lên candleSeries
   const liqMarkersRef    = useRef([])   // [{ time, position, color, shape, text }]
 
+  // ── Funding Rate History refs ───────────────────────────────────────────────
+  const frContainerRef   = useRef(null)
+  const frChartRef       = useRef(null)
+  const frSeriesRef      = useRef(null)
+
   const klineDataRef = useRef([])
   const rsiStateRef = useRef(null)
   const macdStateRef = useRef(null)
@@ -525,11 +531,15 @@ export default function ChartPanel() {
     showTakerVol, setShowTakerVol,
     showCVD, setShowCVD,
     showLiq, setShowLiq,
+    showFR, setShowFR,
   } = useChartStore()
 
   // ── OI History data ───────────────────────────────────────────────────────
   const { oiData, loadMoreOI, hasMoreOI } = useOIHistory(symbol, interval, market)
   const { tvData, loadMoreTV, hasMoreTV } = useTakerVolume(symbol, interval, market)
+
+  // ── Funding Rate History ──────────────────────────────────────────────────
+  const frHistory = useFundingRateHistory(symbol, market)
 
   // ── Drawing tools hook ────────────────────────────────────────────────────
   const {
@@ -830,6 +840,8 @@ export default function ChartPanel() {
       bbUpperRef.current = bbMiddleRef.current = bbLowerRef.current = null
       pixelToPriceRef.current = null
       pixelToTimeRef2.current = null
+      if (frChartRef.current) { frChartRef.current.remove(); frChartRef.current = null }
+      frSeriesRef.current = null
     }
   }, [])
 
@@ -1505,6 +1517,130 @@ export default function ChartPanel() {
 
   useKlineData(candleRef, volumeRef, symbol, interval, market, onKlineData, onKlineUpdate, onKlinePrepend, loadMoreRef)
 
+  // ── Funding Rate History Chart — init/destroy khi showFR / market thay đổi ─
+  useEffect(() => {
+    if (!showFR || market !== 'futures') {
+      if (frChartRef.current) {
+        frChartRef.current.remove()
+        frChartRef.current  = null
+        frSeriesRef.current = null
+      }
+      return
+    }
+
+    let cancelled = false
+    const timerId = setTimeout(() => {
+      if (cancelled || !frContainerRef.current || frChartRef.current) return
+
+      const chart = createChart(frContainerRef.current, {
+        autoSize: true,
+        layout: {
+          background: { color: '#0b0e11' },
+          textColor: '#848e9c',
+          fontFamily: 'Inter, system-ui, sans-serif',
+          attributionLogo: false,
+          fontSize: 10,
+        },
+        grid: {
+          vertLines: { color: '#1a1d26', style: 1 },
+          horzLines: { color: '#1a1d26', style: 1 },
+        },
+        crosshair: {
+          mode: 1,
+          vertLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139' },
+          horzLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139', labelVisible: true },
+        },
+        rightPriceScale: {
+          borderColor: '#1a1d26',
+          textColor: '#848e9c',
+          scaleMargins: { top: 0.1, bottom: 0.1 },
+        },
+        timeScale: { visible: false },
+        handleScroll: false,
+        handleScale: false,
+      })
+
+      const series = chart.addSeries(HistogramSeries, {
+        priceFormat: {
+          type: 'custom',
+          formatter: (v) => (v >= 0 ? '+' : '') + v.toFixed(4) + '%',
+          minMove: 0.0001,
+        },
+        priceScaleId: 'right',
+        lastValueVisible: true,
+        crosshairMarkerVisible: false,
+      })
+
+      // Zero baseline
+      series.createPriceLine({ price: 0, color: '#4c525e88', lineWidth: 1, lineStyle: 2, axisLabelVisible: false })
+
+      frChartRef.current  = chart
+      frSeriesRef.current = series
+
+      // Set data ngay nếu frHistory đã có
+      if (frHistoryRef.current && frHistoryRef.current.length > 0) {
+        series.setData(frHistoryRef.current.map(d => ({
+          time:  d.time,
+          value: d.value,
+          color: d.raw >= 0 ? '#0ecb8199' : '#f6465d99',
+        })))
+        try {
+          const mainRange = mainChartRef.current?.timeScale().getVisibleRange()
+          if (mainRange) chart.timeScale().setVisibleRange(mainRange)
+        } catch (_) {}
+      }
+
+      // Sync timescale với main chart (TimeRange, không dùng LogicalRange)
+      if (mainChartRef.current) {
+        let frSyncRaf = null
+        mainChartRef.current.timeScale().subscribeVisibleTimeRangeChange(range => {
+          if (!range || !frChartRef.current) return
+          if (frSyncRaf) cancelAnimationFrame(frSyncRaf)
+          frSyncRaf = requestAnimationFrame(() => {
+            try { frChartRef.current?.timeScale().setVisibleRange(range) } catch (_) {}
+            frSyncRaf = null
+          })
+        })
+      }
+    }, 0)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timerId)
+      if (frChartRef.current) {
+        frChartRef.current.remove()
+        frChartRef.current  = null
+        frSeriesRef.current = null
+      }
+    }
+  }, [showFR, market])
+
+  // ── Giữ frHistory trong ref để callback trong setTimeout luôn dùng bản mới nhất ─
+  const frHistoryRef = useRef([])
+  useEffect(() => { frHistoryRef.current = frHistory }, [frHistory])
+
+  // ── Set FR data khi frHistory thay đổi ───────────────────────────────────
+  useEffect(() => {
+    if (!frHistory.length) return
+    const apply = () => {
+      if (!frSeriesRef.current || !frChartRef.current) return false
+      frSeriesRef.current.setData(frHistory.map(d => ({
+        time:  d.time,
+        value: d.value,
+        color: d.raw >= 0 ? '#0ecb8199' : '#f6465d99',
+      })))
+      try {
+        const mainRange = mainChartRef.current?.timeScale().getVisibleRange()
+        if (mainRange) frChartRef.current.timeScale().setVisibleRange(mainRange)
+      } catch (_) {}
+      return true
+    }
+    if (!apply()) {
+      const t = setTimeout(apply, 200)
+      return () => clearTimeout(t)
+    }
+  }, [frHistory])
+
   // ── Liquidation markers ───────────────────────────────────────────────────
   // Reset markers khi đổi symbol/interval/market
   useEffect(() => {
@@ -1691,6 +1827,15 @@ export default function ChartPanel() {
                   }`}
                 title="Hiện liquidation markers trên chart (chỉ Futures)">
                 Liq
+              </button>
+            )}
+
+            {market === 'futures' && (
+              <button onClick={() => setShowFR(!showFR)}
+                className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showFR ? 'bg-[#f0b90b1a] text-[#f0b90b] border-[#f0b90b44] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+                  }`}
+                title="Funding Rate History — 100 chu kỳ gần nhất (chỉ Futures)">
+                FR
               </button>
             )}
           </div>
@@ -1937,6 +2082,43 @@ export default function ChartPanel() {
             </div>
             <div
               ref={tvContainerRef}
+              className="w-full"
+              style={{ height: 'calc(100% - 20px)', cursor: isDragging ? 'grabbing' : 'crosshair' }}
+              onMouseDown={() => setIsDragging(true)}
+              onMouseUp={() => setIsDragging(false)}
+              onMouseLeave={() => setIsDragging(false)}
+            />
+          </div>
+        )}
+
+        {/* ── Funding Rate History panel (Futures only) ── */}
+        {showFR && market === 'futures' && (
+          <div className="flex-shrink-0 border-t border-[#1a1d26] overflow-hidden transition-all duration-200"
+            style={{ height: 100, minHeight: 100 }}>
+            <div className="flex items-center gap-2 px-3 py-0.5 bg-[#0b0e11]">
+              <span className="text-[9px] text-[#f0b90b] font-medium">Funding Rate</span>
+              {frHistory.length > 0 && (() => {
+                const last = frHistory[frHistory.length - 1]
+                const pct = last.raw * 100
+                return (
+                  <>
+                    <span className={`text-[9px] font-medium tabular-nums ${pct >= 0 ? 'text-[#0ecb81]' : 'text-[#f6465d]'}`}>
+                      {pct >= 0 ? '+' : ''}{pct.toFixed(4)}%
+                    </span>
+                    <span className="text-[9px] text-[#5e6673]">
+                      {pct >= 0 ? '· Long trả Short' : '· Short trả Long'}
+                    </span>
+                  </>
+                )
+              })()}
+              {frHistory.length > 0 && (
+                <span className="text-[9px] text-[#5e6673] ml-auto">
+                  {frHistory.length} chu kỳ
+                </span>
+              )}
+            </div>
+            <div
+              ref={frContainerRef}
               className="w-full"
               style={{ height: 'calc(100% - 20px)', cursor: isDragging ? 'grabbing' : 'crosshair' }}
               onMouseDown={() => setIsDragging(true)}
