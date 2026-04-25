@@ -158,11 +158,12 @@
 
 const isDev = import.meta.env.DEV
 
-// Khi DEV: dùng proxy Vite (tránh CORS)
-// Khi PROD: gọi thẳng Binance
+// DEV:  Vite proxy xử lý (vite.config.js)
+// PROD: Vercel rewrites xử lý (vercel.json)
+// → Dùng relative path, không gọi thẳng fapi.binance.com để tránh CORS
 const SPOT_BASE         = isDev ? '' : 'https://api.binance.com'
 const FUTURES_BASE      = isDev ? '' : 'https://fapi.binance.com'
-const FUTURES_DATA_BASE = isDev ? '/futures-data' : 'https://fapi.binance.com'
+const FUTURES_DATA_BASE = '/futures-data'  // proxy cả DEV lẫn PROD qua vercel.json / vite proxy
 
 // ── Fetch helpers ─────────────────────────────────────────────────────────────
 
