@@ -95,34 +95,6 @@ const CoinList = forwardRef(function CoinList(props, ref) {
   const kbIndexRef = useRef(-1)
   useEffect(() => { kbIndexRef.current = kbIndex }, [kbIndex])
 
-  // Expose navigateCoin(delta) lên parent (App) qua ref
-  useImperativeHandle(ref, () => ({
-    navigateCoin(delta) {
-      // Lấy list đang hiển thị theo tab hiện tại
-      const list = (() => {
-        if (activeTab === 'gainers') return glSnapshot.gainers
-        if (activeTab === 'losers') return glSnapshot.losers
-        if (activeTab === 'watchlist') return watchSymbols
-        return filtered
-      })()
-      if (!list.length) return
-
-      const cur = kbIndexRef.current
-      const next = cur === -1
-        ? (delta > 0 ? 0 : list.length - 1)
-        : Math.max(0, Math.min(list.length - 1, cur + delta))
-
-      setKbIndex(next)
-      setSymbol(list[next])
-
-      // Scroll row vào view
-      if (listScrollRef.current) {
-        const rows = listScrollRef.current.querySelectorAll('[data-coinrow]')
-        if (rows[next]) rows[next].scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-      }
-    }
-  }), [activeTab, filtered, glSnapshot, watchSymbols])
-
   // Load tickers — giữ nguyên logic gốc
   useEffect(() => {
     setLoading(true)
@@ -228,6 +200,35 @@ const CoinList = forwardRef(function CoinList(props, ref) {
       }
     })
   }, [allSymbols, search, sort, showAll, prices])
+
+  // Expose navigateCoin(delta) lên parent (App) qua ref
+  // ⚠️ Phải đặt SAU khai báo `filtered` để tránh TDZ ReferenceError
+  useImperativeHandle(ref, () => ({
+    navigateCoin(delta) {
+      // Lấy list đang hiển thị theo tab hiện tại
+      const list = (() => {
+        if (activeTab === 'gainers') return glSnapshot.gainers
+        if (activeTab === 'losers') return glSnapshot.losers
+        if (activeTab === 'watchlist') return watchSymbols
+        return filtered
+      })()
+      if (!list.length) return
+
+      const cur = kbIndexRef.current
+      const next = cur === -1
+        ? (delta > 0 ? 0 : list.length - 1)
+        : Math.max(0, Math.min(list.length - 1, cur + delta))
+
+      setKbIndex(next)
+      setSymbol(list[next])
+
+      // Scroll row vào view
+      if (listScrollRef.current) {
+        const rows = listScrollRef.current.querySelectorAll('[data-coinrow]')
+        if (rows[next]) rows[next].scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      }
+    }
+  }), [activeTab, filtered, glSnapshot, watchSymbols])
 
   // ── Row render ─────────────────────────────────────────────────────────────
   function renderRow(s, idx, showRank = false) {
