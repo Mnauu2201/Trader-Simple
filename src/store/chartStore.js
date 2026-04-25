@@ -1,4 +1,4 @@
-// src/store/chartStore.js — v20: thêm showFR (Funding Rate History Chart)
+// src/store/chartStore.js — v21: thêm showDualChart + interval2 (Multi-timeframe)
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
@@ -22,6 +22,10 @@ export const useChartStore = create(
       showLiq: false,   // Liquidation markers trên chart (Futures only)
       showFR: false,    // Funding Rate History chart (Futures only)
 
+      // ── v21: Multi-timeframe ─────────────────────────────────────────────
+      showDualChart: false,   // bật/tắt chart thứ 2 song song
+      interval2: '1h',        // interval của chart thứ 2 (mặc định 1h trend)
+
       // Alert sound settings
       alertVolume: 0.4,          // 0.0 – 1.0
       alertTone: 'sine',       // 'sine' | 'square' | 'sawtooth' | 'triangle'
@@ -40,6 +44,8 @@ export const useChartStore = create(
       setShowCVD: (v) => set({ showCVD: v }),
       setShowLiq: (v) => set({ showLiq: v }),   // ← v19
       setShowFR:  (v) => set({ showFR: v }),    // ← v20
+      setShowDualChart: (v) => set({ showDualChart: v }),  // ← v21
+      setInterval2: (v) => set({ interval2: v }),          // ← v21
       setAlertVolume: (v) => set({ alertVolume: v }),
       setAlertTone: (v) => set({ alertTone: v }),
     }),
@@ -60,6 +66,8 @@ export const useChartStore = create(
         showCVD: state.showCVD,
         showLiq: state.showLiq,   // ← v19
         showFR: state.showFR,     // ← v20
+        showDualChart: state.showDualChart,  // ← v21
+        interval2: state.interval2,          // ← v21
         alertVolume: state.alertVolume,
         alertTone: state.alertTone,
       }),

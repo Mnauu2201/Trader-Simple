@@ -1,5 +1,5 @@
-# Active Context v20
-## Trạng thái: Cập nhật lần 20 ✅
+# Active Context v21
+## Trạng thái: Cập nhật lần 21 ✅
 > **Phiên làm việc tiếp theo:** Đọc mục "📦 Gửi file gì trong phiên tới" ở cuối file này trước khi bắt đầu.
 
 ---
@@ -141,6 +141,16 @@
 | **Sync TimeRange với main chart (pattern giống OI/TVol)** | **v20** |
 | **3-URL fallback (fapi/fapi1/fapi2)** | **v20** |
 | **frHistoryRef để init chart trước khi data về** | **v20** |
+| **Multi-timeframe: nút 2TF trong toolbar ChartPanel** | **v21** |
+| **SecondaryChartPanel.jsx — chart thứ 2 độc lập** | **v21** |
+| **interval2 riêng cho chart thứ 2 (mặc định 1h)** | **v21** |
+| **Interval picker riêng trong chart 2 (màu tím để phân biệt)** | **v21** |
+| **MA20/MA50 + EMA9/EMA21 toggle riêng trong chart 2** | **v21** |
+| **OHLCV tooltip trong chart 2** | **v21** |
+| **Infinite scroll backward trong chart 2 (giống chart chính)** | **v21** |
+| **Desktop: split 50/50 ngang khi bật 2TF** | **v21** |
+| **Persist showDualChart + interval2 vào localStorage** | **v21** |
+| **chartStore.js: +showDualChart, +interval2, +setShowDualChart, +setInterval2** | **v21** |
 
 ---
 
@@ -165,43 +175,51 @@ get prices() { return _prices }
 ---
 
 ### BUG #2 — Chart chỉ hiện 1 nến khi refresh nhanh (v8)
-**Fix đúng:** `await waitForRef(candleRef)` ở đầu `start()`.
+**Fix đúng (useKlineData.js):**
+```js
+// Buffer WS trong khi REST đang load
+let wsBuffer = []
+ws.onmessage → push to wsBuffer
+// Sau khi REST setData xong:
+dataReady = true
+wsBuffer.forEach(c => applyCandle(c))
+wsBuffer = []
+```
+**Rule:** Không apply WS update trước khi REST setData. Buffer → flush.
 
 ---
 
-### BUG #3 — Gainers/Losers lag toàn sidebar (v8)
-**Fix đúng:** Snapshot riêng `glSnapshot`, re-sort mỗi 3s qua `setInterval`.
-**Rule:** KHÔNG sort/filter 300+ coin bên trong component subscribe `prices` store.
+### BUG #3 — RSI overbought/oversold line bị ẩn (v8)
+**Fix đúng:** Dùng `createPriceLine` thay vì series riêng:
+```js
+rsiLine.createPriceLine({ price: 70, color: '#f6465d88', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'OB' })
+rsiLine.createPriceLine({ price: 30, color: '#0ecb8188', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'OS' })
+```
 
 ---
 
-### BUG #4 — Futures chart trắng + PriceCard hiện `---` (v10)
-**Fix đúng:** fetchFutures 3 URL fallback + getKlinesWithRetry 3 lần + WS kline reconnect.
-**Rule:** Mọi REST call quan trọng PHẢI có retry ≥ 3 lần.
+### BUG #4 — OI / TVol / CVD / FR chart không init (v16)
+**Fix đúng:** setTimeout(0) defer createChart cho sub-panels:
+```js
+useEffect(() => {
+  if (!showOI || !oiContainerRef.current) return
+  const timer = setTimeout(() => {
+    // createChart ở đây
+  }, 0)
+  return () => clearTimeout(timer)
+}, [showOI])
+```
 
 ---
 
-### BUG #5 — Sub-chart (OI/TVol/CVD/FR) không hiện vì DOM chưa mount (v16)
-**Fix đúng:** `setTimeout(0)` để defer createChart — đảm bảo React mount DOM trước.
-**Rule:** Mọi sub-chart đều dùng `setTimeout(0)` trong useEffect.
-
----
-
-### BUG #6 — Sub-chart sync timescale không khớp với main chart (v16)
-**Fix đúng:** Dùng `subscribeVisibleTimeRangeChange` + `setVisibleRange` (UTC time).
-**Rule:** KHÔNG dùng LogicalRange để sync giữa 2 chart có số data points khác nhau.
-
----
-
-### BUG #7 — Sub-chart fitContent() gây nhảy view khi setData (v16)
-**Fix đúng:** Sau `series.setData()`, gọi `setVisibleRange(mainChart.timeScale().getVisibleRange())`.
-**Rule:** Không bao giờ gọi `fitContent()` trên sub-chart — luôn sync từ main chart.
-
----
-
-### BUG #8 — Funding Rate WS frozen sau vài phút (v11)
-**Fix đúng:** `ws.onclose` phải reconnect sau 5s (trước chỉ cleanup).
-**Rule:** Mọi WS hook PHẢI có auto-reconnect trong `onclose`.
+### BUG #5 — Sub-chart sync bị lệch (v16)
+**Fix đúng:** Sync TimeRange (UTC), KHÔNG sync LogicalRange:
+```js
+mainChart.timeScale().subscribeVisibleTimeRangeChange((range) => {
+  if (range) subChart.timeScale().setVisibleRange(range)
+})
+```
+**Rule:** LogicalRange không tương đương giữa 2 chart có data length khác nhau.
 
 ---
 
@@ -234,6 +252,9 @@ get prices() { return _prices }
 | Sub-chart setData → setVisibleRange từ main chart | không fitContent() |
 | CVD O(1): chỉ tính delta của nến hiện tại | không recalc toàn bộ mỗi WS tick |
 | frHistoryRef giữ data mới nhất cho setTimeout callback | tránh stale closure trong init chart |
+| SecondaryChartPanel MA/EMA toggle local state riêng | không dùng chung showMA/showEMA global — chart 2 cần độc lập |
+| SecondaryChartPanel KHÔNG sync timescale với main | 2 timeframe khác nhau, sync không có nghĩa |
+| interval2 persist vào chartStore | giữ TF2 interval qua reload |
 
 ---
 
@@ -250,6 +271,7 @@ get prices() { return _prices }
 | OI History | useOIHistory.js | REST fetch, infinite scroll backward, poll 5m |
 | Taker Volume | useTakerVolume.js | REST fetch, infinite scroll backward, poll 1m |
 | Funding Rate History | useFundingRateHistory.js | REST fetch 100 points, poll 8h |
+| MA20/50 + EMA9/21 (TF2) | SecondaryChartPanel.jsx | Full recalc khi load, O(1) per tick via local emaStateRef |
 
 ---
 
@@ -258,9 +280,10 @@ get prices() { return _prices }
 ```
 src/
 ├── components/
-│   ├── App.jsx
+│   ├── App.jsx               — v21: +SecondaryChartPanel import, dual chart layout
 │   ├── CoinList.jsx
-│   ├── ChartPanel.jsx        — v20: +useFundingRateHistory, +FR panel, +FR button toolbar
+│   ├── ChartPanel.jsx        — v21: +nút 2TF toolbar, +showDualChart/setShowDualChart
+│   ├── SecondaryChartPanel.jsx  — v21: MỚI — chart TF2 độc lập (nến+MA+EMA+tooltip+scroll)
 │   ├── PriceCard.jsx
 │   ├── AlertPanel.jsx
 │   ├── OrderBookPanel.jsx
@@ -282,7 +305,7 @@ src/
 │   └── useLiquidations.js    — v19: WS !forceOrder@arr, lọc $10K, auto-reconnect
 ├── store/
 │   ├── marketStore.js
-│   ├── chartStore.js         — v20: +showFR, +setShowFR, persist showFR
+│   ├── chartStore.js         — v21: +showDualChart, +interval2, +setters tương ứng
 │   ├── alertStore.js
 │   └── watchlistStore.js
 ├── services/
@@ -306,17 +329,18 @@ src/
 - v18: CVD — Cumulative Volume Delta (AreaSeries, O(1) update, sync timescale)
 - v19: Liquidation Tracker (WS markers tam giác, lọc $10K, toggle Liq button)
 - v20: Funding Rate History Chart (HistogramSeries xanh/đỏ, 100 chu kỳ, sync timescale)
+- v21: Multi-timeframe 2 chart (split 50/50, interval riêng, MA/EMA toggle, tooltip, scroll)
 
 ---
 
-### 🔲 Tiếp theo — Priority cao (v21)
+### 🔲 Tiếp theo — Priority cao (v22)
 
 | Tính năng | Mô tả | Độ phức tạp |
 |---|---|---|
-| Multi-timeframe 2 chart | 1h trend + 5m entry song song | Cao |
 | Keyboard shortcuts | j/k navigate coin, 1-9 đổi interval | Thấp |
-| Notifications history | Log alerts đã trigger, xem lại được | Trung bình |
 | Export CSV kline | Tải xuống dữ liệu nến đang xem | Thấp |
+| Notifications history | Log alerts đã trigger, xem lại được | Trung bình |
+| Resizable split (kéo divider) | Kéo thanh chia để điều chỉnh tỷ lệ 2 chart | Trung bình |
 
 ---
 
@@ -333,6 +357,7 @@ src/
 | CVD reset về 0 mỗi lần load chart mới | Thấp | CVD là relative indicator, acceptable |
 | Liq markers snap về nến gần nhất (không snap chính xác giá) | Thấp | lightweight-charts markers không có price field, chỉ time |
 | FR History không sync ngược từ sub→main khi scroll FR chart | Thấp | handleScroll: false trên FR chart, acceptable |
+| SecondaryChartPanel split width cố định 50/50 | Thấp | Chưa có resizable divider — v22 roadmap |
 
 ---
 
@@ -340,13 +365,15 @@ src/
 
 **Bắt buộc gửi:**
 ```
-📄 active-context-v20.md     ← file này (bắt buộc, đọc trước tiên)
+📄 active-context-v21.md     ← file này (bắt buộc, đọc trước tiên)
 ```
 
 **Gửi nếu muốn sửa / thêm tính năng liên quan:**
 
 | Muốn làm gì | File cần gửi thêm |
 |---|---|
+| Sửa / cải thiện chart TF2 | `SecondaryChartPanel.jsx` |
+| Thêm resizable divider cho dual chart | `App.jsx` + `SecondaryChartPanel.jsx` |
 | Sửa Funding Rate History Chart | `ChartPanel.jsx` + `useFundingRateHistory.js` |
 | Sửa Liquidation Tracker | `ChartPanel.jsx` + `useLiquidations.js` |
 | Sửa CVD | `ChartPanel.jsx` + `useKlineData.js` |
@@ -363,7 +390,7 @@ src/
 
 **Gợi ý câu prompt mở đầu phiên tới:**
 ```
-Đây là active-context-v20.md theo dõi dự án Binance Tracker.
+Đây là active-context-v21.md theo dõi dự án Binance Tracker.
 Đọc kỹ "Bug đã sửa" trước khi viết code.
 Nhiệm vụ hôm nay: [mô tả]
 ```

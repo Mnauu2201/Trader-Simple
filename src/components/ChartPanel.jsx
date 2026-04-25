@@ -233,7 +233,7 @@ function fmtOI(val) {
 function calcCVDFull(data) {
   let cvd = 0
   return data.map(d => {
-    const buyVol  = d.takerBuyVol ?? 0
+    const buyVol = d.takerBuyVol ?? 0
     const sellVol = (d.volume ?? 0) - buyVol
     cvd += buyVol - sellVol
     return { time: d.time, value: cvd }
@@ -460,35 +460,35 @@ export default function ChartPanel() {
   const bbLowerRef = useRef(null)
 
   // ── OI History refs ───────────────────────────────────────────────────────
-  const oiContainerRef     = useRef(null)
-  const oiChartRef         = useRef(null)
-  const oiSeriesRef        = useRef(null)
-  const loadMoreOIRef      = useRef(null)   // fn được gán sau khi hook mount
+  const oiContainerRef = useRef(null)
+  const oiChartRef = useRef(null)
+  const oiSeriesRef = useRef(null)
+  const loadMoreOIRef = useRef(null)   // fn được gán sau khi hook mount
   const isLoadingOIMoreRef = useRef(false)  // guard spinner
 
   // ── Taker Buy/Sell Volume refs ──────────────────────────────────────────────
-  const tvContainerRef     = useRef(null)
-  const tvChartRef         = useRef(null)
-  const tvBuySeriesRef     = useRef(null)
-  const tvSellSeriesRef    = useRef(null)
-  const loadMoreTVRef      = useRef(null)
+  const tvContainerRef = useRef(null)
+  const tvChartRef = useRef(null)
+  const tvBuySeriesRef = useRef(null)
+  const tvSellSeriesRef = useRef(null)
+  const loadMoreTVRef = useRef(null)
   const isLoadingTVMoreRef = useRef(false)
-  const tvDataRef          = useRef([])
+  const tvDataRef = useRef([])
 
   // ── CVD refs ───────────────────────────────────────────────────────────────
-  const cvdContainerRef  = useRef(null)
-  const cvdChartRef      = useRef(null)
-  const cvdSeriesRef     = useRef(null)
-  const cvdStateRef      = useRef(null)  // { lastCVD } — O(1) per tick
+  const cvdContainerRef = useRef(null)
+  const cvdChartRef = useRef(null)
+  const cvdSeriesRef = useRef(null)
+  const cvdStateRef = useRef(null)  // { lastCVD } — O(1) per tick
 
   // ── Liquidation markers ref ────────────────────────────────────────────────
   // Lưu danh sách markers để setMarkers lên candleSeries
-  const liqMarkersRef    = useRef([])   // [{ time, position, color, shape, text }]
+  const liqMarkersRef = useRef([])   // [{ time, position, color, shape, text }]
 
   // ── Funding Rate History refs ───────────────────────────────────────────────
-  const frContainerRef   = useRef(null)
-  const frChartRef       = useRef(null)
-  const frSeriesRef      = useRef(null)
+  const frContainerRef = useRef(null)
+  const frChartRef = useRef(null)
+  const frSeriesRef = useRef(null)
 
   const klineDataRef = useRef([])
   const rsiStateRef = useRef(null)
@@ -532,6 +532,7 @@ export default function ChartPanel() {
     showCVD, setShowCVD,
     showLiq, setShowLiq,
     showFR, setShowFR,
+    showDualChart, setShowDualChart,
   } = useChartStore()
 
   // ── OI History data ───────────────────────────────────────────────────────
@@ -904,7 +905,7 @@ export default function ChartPanel() {
         },
       })
 
-      oiChartRef.current  = chart
+      oiChartRef.current = chart
       oiSeriesRef.current = series
 
       // Set data ngay nếu oiData đã có sẵn (fetch về trước khi chart init xong)
@@ -915,7 +916,7 @@ export default function ChartPanel() {
         try {
           const mainRange = mainChartRef.current?.timeScale().getVisibleRange()
           if (mainRange) chart.timeScale().setVisibleRange(mainRange)
-        } catch (_) {}
+        } catch (_) { }
       }
 
       // Sync timescale với main chart dùng TIME range (không dùng logical index
@@ -926,7 +927,7 @@ export default function ChartPanel() {
           if (!range || !oiChartRef.current) return
           if (oiSyncRaf) cancelAnimationFrame(oiSyncRaf)
           oiSyncRaf = requestAnimationFrame(() => {
-            try { oiChartRef.current?.timeScale().setVisibleRange(range) } catch (_) {}
+            try { oiChartRef.current?.timeScale().setVisibleRange(range) } catch (_) { }
             oiSyncRaf = null
           })
         })
@@ -945,7 +946,7 @@ export default function ChartPanel() {
                 isLoadingOIMoreRef.current = false
               })
             }
-          } catch (_) {}
+          } catch (_) { }
         })
       }
     }, 0)
@@ -955,7 +956,7 @@ export default function ChartPanel() {
       clearTimeout(timerId)
       if (oiChartRef.current) {
         oiChartRef.current.remove()
-        oiChartRef.current  = null
+        oiChartRef.current = null
         oiSeriesRef.current = null
       }
     }
@@ -982,7 +983,7 @@ export default function ChartPanel() {
       try {
         const mainRange = mainChartRef.current?.timeScale().getVisibleRange()
         if (mainRange) oiChartRef.current.timeScale().setVisibleRange(mainRange)
-      } catch (_) {}
+      } catch (_) { }
       return true
     }
     if (!apply()) {
@@ -996,8 +997,8 @@ export default function ChartPanel() {
     if (!showTakerVol || market !== 'futures') {
       if (tvChartRef.current) {
         tvChartRef.current.remove()
-        tvChartRef.current   = null
-        tvBuySeriesRef.current  = null
+        tvChartRef.current = null
+        tvBuySeriesRef.current = null
         tvSellSeriesRef.current = null
       }
       return
@@ -1050,8 +1051,8 @@ export default function ChartPanel() {
       })
       chart.priceScale('tv').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.05 } })
 
-      tvChartRef.current      = chart
-      tvBuySeriesRef.current  = buySeries
+      tvChartRef.current = chart
+      tvBuySeriesRef.current = buySeries
       tvSellSeriesRef.current = sellSeries
 
       // Set data ngay nếu đã có sẵn
@@ -1062,7 +1063,7 @@ export default function ChartPanel() {
         try {
           const mainRange = mainChartRef.current?.timeScale().getVisibleRange()
           if (mainRange) chart.timeScale().setVisibleRange(mainRange)
-        } catch (_) {}
+        } catch (_) { }
       }
 
       // Sync timescale + infinite scroll
@@ -1072,7 +1073,7 @@ export default function ChartPanel() {
           if (!range || !tvChartRef.current) return
           if (tvSyncRaf) cancelAnimationFrame(tvSyncRaf)
           tvSyncRaf = requestAnimationFrame(() => {
-            try { tvChartRef.current?.timeScale().setVisibleRange(range) } catch (_) {}
+            try { tvChartRef.current?.timeScale().setVisibleRange(range) } catch (_) { }
             tvSyncRaf = null
           })
         })
@@ -1088,7 +1089,7 @@ export default function ChartPanel() {
                 isLoadingTVMoreRef.current = false
               })
             }
-          } catch (_) {}
+          } catch (_) { }
         })
       }
     }, 0)
@@ -1098,8 +1099,8 @@ export default function ChartPanel() {
       clearTimeout(timerId)
       if (tvChartRef.current) {
         tvChartRef.current.remove()
-        tvChartRef.current      = null
-        tvBuySeriesRef.current  = null
+        tvChartRef.current = null
+        tvBuySeriesRef.current = null
         tvSellSeriesRef.current = null
       }
     }
@@ -1111,12 +1112,12 @@ export default function ChartPanel() {
     const applyTV = () => {
       if (!tvBuySeriesRef.current || !tvSellSeriesRef.current || !tvChartRef.current) return false
       const sorted = [...tvData].sort((a, b) => a.time - b.time)
-      tvBuySeriesRef.current.setData(sorted.map(d => ({ time: d.time, value: d.buyVol,  color: '#0ecb8188' })))
+      tvBuySeriesRef.current.setData(sorted.map(d => ({ time: d.time, value: d.buyVol, color: '#0ecb8188' })))
       tvSellSeriesRef.current.setData(sorted.map(d => ({ time: d.time, value: -d.sellVol, color: '#f6465d88' })))
       try {
         const mainRange = mainChartRef.current?.timeScale().getVisibleRange()
         if (mainRange) tvChartRef.current.timeScale().setVisibleRange(mainRange)
-      } catch (_) {}
+      } catch (_) { }
       return true
     }
     if (!applyTV()) {
@@ -1197,7 +1198,7 @@ export default function ChartPanel() {
         try {
           const mainRange = mainChartRef.current?.timeScale().getVisibleRange()
           if (mainRange) chart.timeScale().setVisibleRange(mainRange)
-        } catch (_) {}
+        } catch (_) { }
       }
 
       // Sync timescale với main chart
@@ -1207,7 +1208,7 @@ export default function ChartPanel() {
           if (!range || !cvdChartRef.current) return
           if (cvdSyncRaf) cancelAnimationFrame(cvdSyncRaf)
           cvdSyncRaf = requestAnimationFrame(() => {
-            try { cvdChartRef.current?.timeScale().setVisibleRange(range) } catch (_) {}
+            try { cvdChartRef.current?.timeScale().setVisibleRange(range) } catch (_) { }
             cvdSyncRaf = null
           })
         })
@@ -1292,10 +1293,10 @@ export default function ChartPanel() {
     }
     const cursorValue =
       isDragging ? 'grabbing'
-      : activeTool === 'dot_cursor' ? 'none'
-      : activeTool === 'cursor' ? 'default'
-      : activeTool === 'demo_cursor' ? 'default'
-      : null  // cross + drawing modes: để LW tự xử lý (crosshair)
+        : activeTool === 'dot_cursor' ? 'none'
+          : activeTool === 'cursor' ? 'default'
+            : activeTool === 'demo_cursor' ? 'default'
+              : null  // cross + drawing modes: để LW tự xử lý (crosshair)
     if (cursorValue) {
       styleEl.textContent = `[data-lw-cursor-host] canvas { cursor: ${cursorValue} !important; }`
     } else {
@@ -1436,10 +1437,10 @@ export default function ChartPanel() {
 
     // CVD — O(1) per tick
     if (cvdSeriesRef.current && cvdStateRef.current) {
-      const buyVol  = candle.takerBuyVol ?? 0
+      const buyVol = candle.takerBuyVol ?? 0
       const sellVol = (candle.volume ?? 0) - buyVol
-      const delta   = buyVol - sellVol
-      const newCVD  = cvdStateRef.current.lastCVD + delta
+      const delta = buyVol - sellVol
+      const newCVD = cvdStateRef.current.lastCVD + delta
       cvdSeriesRef.current.update({ time: candle.time, value: newCVD })
       if (isNew) cvdStateRef.current = { lastCVD: newCVD }
     }
@@ -1522,7 +1523,7 @@ export default function ChartPanel() {
     if (!showFR || market !== 'futures') {
       if (frChartRef.current) {
         frChartRef.current.remove()
-        frChartRef.current  = null
+        frChartRef.current = null
         frSeriesRef.current = null
       }
       return
@@ -1574,20 +1575,20 @@ export default function ChartPanel() {
       // Zero baseline
       series.createPriceLine({ price: 0, color: '#4c525e88', lineWidth: 1, lineStyle: 2, axisLabelVisible: false })
 
-      frChartRef.current  = chart
+      frChartRef.current = chart
       frSeriesRef.current = series
 
       // Set data ngay nếu frHistory đã có
       if (frHistoryRef.current && frHistoryRef.current.length > 0) {
         series.setData(frHistoryRef.current.map(d => ({
-          time:  d.time,
+          time: d.time,
           value: d.value,
           color: d.raw >= 0 ? '#0ecb8199' : '#f6465d99',
         })))
         try {
           const mainRange = mainChartRef.current?.timeScale().getVisibleRange()
           if (mainRange) chart.timeScale().setVisibleRange(mainRange)
-        } catch (_) {}
+        } catch (_) { }
       }
 
       // Sync timescale với main chart (TimeRange, không dùng LogicalRange)
@@ -1597,7 +1598,7 @@ export default function ChartPanel() {
           if (!range || !frChartRef.current) return
           if (frSyncRaf) cancelAnimationFrame(frSyncRaf)
           frSyncRaf = requestAnimationFrame(() => {
-            try { frChartRef.current?.timeScale().setVisibleRange(range) } catch (_) {}
+            try { frChartRef.current?.timeScale().setVisibleRange(range) } catch (_) { }
             frSyncRaf = null
           })
         })
@@ -1609,7 +1610,7 @@ export default function ChartPanel() {
       clearTimeout(timerId)
       if (frChartRef.current) {
         frChartRef.current.remove()
-        frChartRef.current  = null
+        frChartRef.current = null
         frSeriesRef.current = null
       }
     }
@@ -1625,14 +1626,14 @@ export default function ChartPanel() {
     const apply = () => {
       if (!frSeriesRef.current || !frChartRef.current) return false
       frSeriesRef.current.setData(frHistory.map(d => ({
-        time:  d.time,
+        time: d.time,
         value: d.value,
         color: d.raw >= 0 ? '#0ecb8199' : '#f6465d99',
       })))
       try {
         const mainRange = mainChartRef.current?.timeScale().getVisibleRange()
         if (mainRange) frChartRef.current.timeScale().setVisibleRange(mainRange)
-      } catch (_) {}
+      } catch (_) { }
       return true
     }
     if (!apply()) {
@@ -1646,7 +1647,7 @@ export default function ChartPanel() {
   useEffect(() => {
     liqMarkersRef.current = []
     if (candleRef.current) {
-      try { candleRef.current.setMarkers([]) } catch (_) {}
+      try { candleRef.current.setMarkers([]) } catch (_) { }
     }
   }, [symbol, interval, market])
 
@@ -1685,7 +1686,7 @@ export default function ChartPanel() {
       .sort((a, b) => a.time - b.time)
       .slice(-200)   // giữ tối đa 200 markers gần nhất
 
-    try { candles.setMarkers(liqMarkersRef.current) } catch (_) {}
+    try { candles.setMarkers(liqMarkersRef.current) } catch (_) { }
   }, [showLiq])
 
   useLiquidations(symbol, market, handleLiquidation)
@@ -1694,7 +1695,7 @@ export default function ChartPanel() {
   useEffect(() => {
     if (!showLiq) {
       liqMarkersRef.current = []
-      try { candleRef.current?.setMarkers([]) } catch (_) {}
+      try { candleRef.current?.setMarkers([]) } catch (_) { }
     }
   }, [showLiq])
 
@@ -1838,6 +1839,16 @@ export default function ChartPanel() {
                 FR
               </button>
             )}
+
+            {/* ── v21: Multi-timeframe toggle ── */}
+            <button onClick={() => setShowDualChart(!showDualChart)}
+              className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showDualChart
+                  ? 'bg-[#a855f71a] text-[#a855f7] border-[#a855f744] font-medium'
+                  : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+                }`}
+              title="Multi-timeframe: hiển thị 2 chart song song">
+              2TF
+            </button>
           </div>
 
           <div className="ml-auto flex items-center gap-2">

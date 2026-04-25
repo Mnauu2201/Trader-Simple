@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import CoinList from './components/CoinList'
 import ChartPanel from './components/ChartPanel'
+import SecondaryChartPanel from './components/SecondaryChartPanel'
 import PriceCard from './components/PriceCard'
 import AlertPanel from './components/AlertPanel'
 import OrderBookPanel from './components/OrderBookPanel'
@@ -288,6 +289,7 @@ export default function App() {
   const [rightPanel, setRightPanel] = useState(null)
   const [mobileTab, setMobileTab] = useState('chart')
   const activeCount = useAlertStore(s => s.alerts.filter(a => !a.triggered).length)
+  const showDualChart = useChartStore(s => s.showDualChart)
 
   function togglePanel(mode) {
     setRightPanel(prev => prev === mode ? null : mode)
@@ -433,8 +435,22 @@ export default function App() {
           <PriceCard />
 
           <div className="flex-1 flex min-h-0">
-            <div className="flex-1 min-w-0">
-              <ChartPanel />
+            {/* ── Chart area: single hoặc dual ── */}
+            <div className="flex-1 flex min-w-0 min-h-0">
+              {showDualChart ? (
+                <>
+                  <div className="flex-1 min-w-0 min-h-0">
+                    <ChartPanel />
+                  </div>
+                  <div className="flex-1 min-w-0 min-h-0">
+                    <SecondaryChartPanel />
+                  </div>
+                </>
+              ) : (
+                <div className="flex-1 min-w-0 min-h-0">
+                  <ChartPanel />
+                </div>
+              )}
             </div>
 
             {/* Right panel */}
