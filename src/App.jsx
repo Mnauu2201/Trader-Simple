@@ -367,12 +367,43 @@ function ResizableDualChart() {
   )
 }
 
+// ── Interval map cho phím 1-9 ────────────────────────────────────────────────
+const KEY_INTERVALS = {
+  '1': '1m', '2': '5m', '3': '15m', '4': '30m',
+  '5': '1h', '6': '4h', '7': '1d', '8': '1w', '9': '1M',
+}
+
 // ── Main App ────────────────────────────────────────────────────────────────
 export default function App() {
   const [rightPanel, setRightPanel] = useState(null)
   const [mobileTab, setMobileTab] = useState('chart')
   const activeCount = useAlertStore(s => s.alerts.filter(a => !a.triggered).length)
   const showDualChart = useChartStore(s => s.showDualChart)
+  const setInterval = useChartStore(s => s.setInterval)
+  const coinListRef = useRef(null)
+
+  // ── Global keyboard shortcuts ────────────────────────────────────────────
+  useEffect(() => {
+    function handleKeyDown(e) {
+      // Bỏ qua khi đang focus input / textarea / select / contenteditable
+      const tag = document.activeElement?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (document.activeElement?.isContentEditable) return
+
+      // j = xuống, k = lên (vim-style navigate coin)
+      if (e.key === 'j') { e.preventDefault(); coinListRef.current?.navigateCoin(1); return }
+      if (e.key === 'k') { e.preventDefault(); coinListRef.current?.navigateCoin(-1); return }
+
+      // 1–9 = đổi interval
+      if (KEY_INTERVALS[e.key]) { e.preventDefault(); setInterval(KEY_INTERVALS[e.key]); return }
+
+      // Escape = đóng right panel
+      if (e.key === 'Escape') { setRightPanel(null); return }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [setInterval])
 
   function togglePanel(mode) {
     setRightPanel(prev => prev === mode ? null : mode)
@@ -410,7 +441,7 @@ export default function App() {
           {/* TAB: Market — CoinList full screen */}
           {mobileTab === 'market' && (
             <div className="h-full overflow-hidden">
-              <CoinList />
+              <CoinList ref={coinListRef} />
             </div>
           )}
 
@@ -476,7 +507,7 @@ export default function App() {
 
           {/* Coin list */}
           <div className="flex-1 overflow-hidden">
-            <CoinList />
+            <CoinList ref={coinListRef} />
           </div>
 
           {/* Panel toggle buttons */}

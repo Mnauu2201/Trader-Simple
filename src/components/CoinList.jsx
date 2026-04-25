@@ -1,7 +1,7 @@
 // src/components/CoinList.jsx
 // UI redesign — logic 100% giữ nguyên từ v14
 
-import { useEffect, useState, useMemo, useRef } from 'react'
+import { useEffect, useState, useMemo, useRef, forwardRef, useImperativeHandle } from 'react'
 import { useMarketStore } from '../store/marketStore'
 import { useChartStore } from '../store/chartStore'
 import { useWatchlistStore } from '../store/watchlistStore'
@@ -68,7 +68,7 @@ function StarButton({ symbol, isPinned, onToggle }) {
   )
 }
 
-export default function CoinList() {
+const CoinList = forwardRef(function CoinList(props, ref) {
   const prices = useMarketStore(s => s.prices)
   const setPrices = useMarketStore(s => s.setPrices)
   const { symbol, setSymbol, market } = useChartStore()
@@ -88,6 +88,40 @@ export default function CoinList() {
   const glTimerRef = useRef(null)
   const allSymbolsRef = useRef(allSymbols)
   useEffect(() => { allSymbolsRef.current = allSymbols }, [allSymbols])
+
+  // ── Keyboard navigation ────────────────────────────────────────────────────
+  const [kbIndex, setKbIndex] = useState(-1)   // -1 = không có focus keyboard
+  const listScrollRef = useRef(null)             // ref cho div scroll chứa rows
+  const kbIndexRef = useRef(-1)
+  useEffect(() => { kbIndexRef.current = kbIndex }, [kbIndex])
+
+  // Expose navigateCoin(delta) lên parent (App) qua ref
+  useImperativeHandle(ref, () => ({
+    navigateCoin(delta) {
+      // Lấy list đang hiển thị theo tab hiện tại
+      const list = (() => {
+        if (activeTab === 'gainers') return glSnapshot.gainers
+        if (activeTab === 'losers') return glSnapshot.losers
+        if (activeTab === 'watchlist') return watchSymbols
+        return filtered
+      })()
+      if (!list.length) return
+
+      const cur = kbIndexRef.current
+      const next = cur === -1
+        ? (delta > 0 ? 0 : list.length - 1)
+        : Math.max(0, Math.min(list.length - 1, cur + delta))
+
+      setKbIndex(next)
+      setSymbol(list[next])
+
+      // Scroll row vào view
+      if (listScrollRef.current) {
+        const rows = listScrollRef.current.querySelectorAll('[data-coinrow]')
+        if (rows[next]) rows[next].scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      }
+    }
+  }), [activeTab, filtered, glSnapshot, watchSymbols])
 
   // Load tickers — giữ nguyên logic gốc
   useEffect(() => {
@@ -200,6 +234,7 @@ export default function CoinList() {
     const d = prices[s] || {}
     const isUp = (d.change24h ?? 0) >= 0
     const isSelected = symbol === s
+    const isKbFocused = kbIndex === idx
     const hasData = d.price != null && !isNaN(d.price)
     const baseName = s.replace('USDT', '')
     const pinned = isPinnedFn(s)
@@ -208,15 +243,16 @@ export default function CoinList() {
     return (
       <div
         key={s}
-        onClick={() => setSymbol(s)}
+        data-coinrow
+        onClick={() => { setSymbol(s); setKbIndex(idx) }}
         className="flex items-center gap-1.5 px-2 py-1.5 cursor-pointer transition-all"
         style={{
-          background: isSelected ? '#f0b90b0a' : 'transparent',
-          borderLeft: isSelected ? '2px solid #f0b90b' : '2px solid transparent',
+          background: isSelected ? '#f0b90b0a' : isKbFocused ? '#ffffff08' : 'transparent',
+          borderLeft: isSelected ? '2px solid #f0b90b' : isKbFocused ? '2px solid #ffffff22' : '2px solid transparent',
           borderBottom: '0.5px solid #161b22',
         }}
         onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = '#161b2280' }}
-        onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = 'transparent' }}
+        onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = isKbFocused ? '#ffffff08' : 'transparent' }}
       >
         <StarButton symbol={s} isPinned={pinned} onToggle={toggleWatchlist} />
 
@@ -360,7 +396,7 @@ export default function CoinList() {
           </div>
 
           {/* Rows */}
-          <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: '#2a3040 transparent' }}>
+          <div ref={listScrollRef} className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: '#2a3040 transparent' }}>
             {loading && (
               <div className="flex items-center justify-center h-20 text-xs" style={{ color: '#3a4555' }}>
                 <span>Đang tải...</span>
@@ -488,4 +524,6 @@ export default function CoinList() {
 
     </div>
   )
-}
+})
+
+export default CoinList

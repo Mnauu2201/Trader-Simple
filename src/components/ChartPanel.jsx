@@ -1852,6 +1852,36 @@ export default function ChartPanel() {
           </div>
 
           <div className="ml-auto flex items-center gap-2">
+            {/* ── v23: Export CSV ── */}
+            <button
+              onClick={() => {
+                const data = klineDataRef.current
+                if (!data.length) return
+                const rows = [
+                  ['time', 'open', 'high', 'low', 'close', 'volume'].join(','),
+                  ...data.map(c => [
+                    new Date(c.time * 1000).toISOString(),
+                    c.open, c.high, c.low, c.close,
+                    c.volume ?? '',
+                  ].join(','))
+                ]
+                const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `${symbol}_${interval}_${new Date().toISOString().slice(0, 10)}.csv`
+                a.click()
+                URL.revokeObjectURL(url)
+              }}
+              className="flex items-center gap-1 px-2 py-0.5 text-[10px] rounded border border-[#2b3139] text-[#5e6673] hover:text-[#0ecb81] hover:border-[#0ecb8144] transition-all"
+              title={`Tải xuống ${klineDataRef.current?.length ?? 0} nến dưới dạng CSV`}
+            >
+              <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M8 2v8M5 7l3 3 3-3M3 12h10" />
+              </svg>
+              CSV
+            </button>
+
             <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${market === 'futures' ? 'bg-[#f0b90b1a] text-[#f0b90b]' : 'bg-[#0ecb811a] text-[#0ecb81]'
               }`}>
               {market === 'futures' ? 'FUTURES' : 'SPOT'}
