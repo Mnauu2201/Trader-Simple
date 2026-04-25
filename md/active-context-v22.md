@@ -1,5 +1,5 @@
-# Active Context v21
-## Trạng thái: Cập nhật lần 21 ✅
+# Active Context v22
+## Trạng thái: Cập nhật lần 22 ✅
 > **Phiên làm việc tiếp theo:** Đọc mục "📦 Gửi file gì trong phiên tới" ở cuối file này trước khi bắt đầu.
 
 ---
@@ -151,6 +151,17 @@
 | **Desktop: split 50/50 ngang khi bật 2TF** | **v21** |
 | **Persist showDualChart + interval2 vào localStorage** | **v21** |
 | **chartStore.js: +showDualChart, +interval2, +setShowDualChart, +setInterval2** | **v21** |
+| **Resizable divider giữa 2 chart (kéo chuột)** | **v22** |
+| **Clamp 20%–80% tránh chart bị thu nhỏ quá mức** | **v22** |
+| **Grip dots màu tím + highlight khi hover divider** | **v22** |
+| **ResizableDualChart component trong App.jsx** | **v22** |
+| **Notifications history — tab History trong AlertPanel** | **v22** |
+| **notifHistory lưu tối đa 100 bản ghi, persist localStorage** | **v22** |
+| **HistoryRow: symbol, direction, target price → triggered price, timestamp, % chênh lệch** | **v22** |
+| **Badge đếm số lần trigger trên tab History** | **v22** |
+| **Nút "Xóa tất cả" history riêng biệt** | **v22** |
+| **alertStore.js: +notifHistory, +addNotifHistory, +clearNotifHistory** | **v22** |
+| **useAlertChecker.js: ghi log vào notifHistory khi trigger** | **v22** |
 
 ---
 
@@ -241,6 +252,19 @@ mainChart.timeScale().subscribeVisibleTimeRangeChange((range) => {
 | CVD state lưu qua `cvdStateRef` | O(1) per tick |
 | alertVolume/alertTone đọc qua `soundRef` (useRef) | tránh stale closure |
 | OrderBook/RecentTrades WS → RAF batch | @depth5 10msg/s, @aggTrade 50+msg/s |
+| addNotifHistory đọc qua `addNotifHistoryRef` (useRef) | tránh stale closure — cùng pattern với soundRef |
+
+---
+
+## 🗺️ Pattern quan trọng — KHÔNG được vi phạm
+
+| Pattern | Áp dụng ở đâu |
+|---|---|
+| cancelledRef để tránh setState sau unmount | mọi WS hook |
+| RAF batch cho WS data fast-changing | useOrderBook, useRecentTrades |
+| setTimeout(0) defer createChart | mọi sub-panel dùng createChart |
+| Buffer WS → flush sau REST setData | useKlineData |
+| useRef wrap cho mọi callback dùng trong effect | soundRef, markTriggeredRef, addNotifHistoryRef |
 | RecentTrades dùng Map keyed by aggId | dedup tự động |
 | RecentTradesPanel overflow-hidden + height cố định | 30 row không scroll |
 | Watchlist ngoài top 180 có WS stream riêng | giá realtime mọi pinned coin |
@@ -255,6 +279,9 @@ mainChart.timeScale().subscribeVisibleTimeRangeChange((range) => {
 | SecondaryChartPanel MA/EMA toggle local state riêng | không dùng chung showMA/showEMA global — chart 2 cần độc lập |
 | SecondaryChartPanel KHÔNG sync timescale với main | 2 timeframe khác nhau, sync không có nghĩa |
 | interval2 persist vào chartStore | giữ TF2 interval qua reload |
+| ResizableDualChart dùng isDraggingRef (không dùng state) | tránh re-render khi drag |
+| Divider clamp 20%–80% | chart không bị thu quá nhỏ |
+| notifHistory tối đa 100 bản ghi (.slice(0, 100)) | tránh localStorage phình to |
 
 ---
 
@@ -280,12 +307,12 @@ mainChart.timeScale().subscribeVisibleTimeRangeChange((range) => {
 ```
 src/
 ├── components/
-│   ├── App.jsx               — v21: +SecondaryChartPanel import, dual chart layout
+│   ├── App.jsx               — v22: +ResizableDualChart (resizable divider kéo chuột)
 │   ├── CoinList.jsx
 │   ├── ChartPanel.jsx        — v21: +nút 2TF toolbar, +showDualChart/setShowDualChart
-│   ├── SecondaryChartPanel.jsx  — v21: MỚI — chart TF2 độc lập (nến+MA+EMA+tooltip+scroll)
+│   ├── SecondaryChartPanel.jsx  — v21: chart TF2 độc lập (nến+MA+EMA+tooltip+scroll)
 │   ├── PriceCard.jsx
-│   ├── AlertPanel.jsx
+│   ├── AlertPanel.jsx        — v22: +tab History, +HistoryRow, +fmtDateTime
 │   ├── OrderBookPanel.jsx
 │   ├── RecentTradesPanel.jsx
 │   ├── DrawingToolbar.jsx
@@ -293,7 +320,7 @@ src/
 ├── hooks/
 │   ├── useBinanceWS.js
 │   ├── useKlineData.js       — v18: +takerBuyVol field trong WS candle (k.V)
-│   ├── useAlertChecker.js
+│   ├── useAlertChecker.js    — v22: +ghi notifHistory khi trigger (addNotifHistoryRef pattern)
 │   ├── useFundingRate.js
 │   ├── useFundingRateHistory.js  — v20: REST 100 chu kỳ, poll 8h, cancelledRef pattern
 │   ├── useOrderBook.js
@@ -306,7 +333,7 @@ src/
 ├── store/
 │   ├── marketStore.js
 │   ├── chartStore.js         — v21: +showDualChart, +interval2, +setters tương ứng
-│   ├── alertStore.js
+│   ├── alertStore.js         — v22: +notifHistory, +addNotifHistory, +clearNotifHistory (persist)
 │   └── watchlistStore.js
 ├── services/
 │   └── binanceApi.js         — v18: getKlines expose takerBuyVol (index 9), +getTakerBuySellVol
@@ -330,17 +357,16 @@ src/
 - v19: Liquidation Tracker (WS markers tam giác, lọc $10K, toggle Liq button)
 - v20: Funding Rate History Chart (HistogramSeries xanh/đỏ, 100 chu kỳ, sync timescale)
 - v21: Multi-timeframe 2 chart (split 50/50, interval riêng, MA/EMA toggle, tooltip, scroll)
+- v22: Resizable divider (kéo chuột, clamp 20–80%) + Notifications history (tab History, persist 100 bản ghi)
 
 ---
 
-### 🔲 Tiếp theo — Priority cao (v22)
+### 🔲 Tiếp theo — Priority cao (v23)
 
 | Tính năng | Mô tả | Độ phức tạp |
 |---|---|---|
 | Keyboard shortcuts | j/k navigate coin, 1-9 đổi interval | Thấp |
 | Export CSV kline | Tải xuống dữ liệu nến đang xem | Thấp |
-| Notifications history | Log alerts đã trigger, xem lại được | Trung bình |
-| Resizable split (kéo divider) | Kéo thanh chia để điều chỉnh tỷ lệ 2 chart | Trung bình |
 
 ---
 
@@ -357,7 +383,6 @@ src/
 | CVD reset về 0 mỗi lần load chart mới | Thấp | CVD là relative indicator, acceptable |
 | Liq markers snap về nến gần nhất (không snap chính xác giá) | Thấp | lightweight-charts markers không có price field, chỉ time |
 | FR History không sync ngược từ sub→main khi scroll FR chart | Thấp | handleScroll: false trên FR chart, acceptable |
-| SecondaryChartPanel split width cố định 50/50 | Thấp | Chưa có resizable divider — v22 roadmap |
 
 ---
 
@@ -365,15 +390,17 @@ src/
 
 **Bắt buộc gửi:**
 ```
-📄 active-context-v21.md     ← file này (bắt buộc, đọc trước tiên)
+📄 active-context-v22.md     ← file này (bắt buộc, đọc trước tiên)
 ```
 
 **Gửi nếu muốn sửa / thêm tính năng liên quan:**
 
 | Muốn làm gì | File cần gửi thêm |
 |---|---|
+| Keyboard shortcuts | `App.jsx` + `CoinList.jsx` |
+| Export CSV kline | `ChartPanel.jsx` + `useKlineData.js` |
 | Sửa / cải thiện chart TF2 | `SecondaryChartPanel.jsx` |
-| Thêm resizable divider cho dual chart | `App.jsx` + `SecondaryChartPanel.jsx` |
+| Sửa resizable divider | `App.jsx` |
 | Sửa Funding Rate History Chart | `ChartPanel.jsx` + `useFundingRateHistory.js` |
 | Sửa Liquidation Tracker | `ChartPanel.jsx` + `useLiquidations.js` |
 | Sửa CVD | `ChartPanel.jsx` + `useKlineData.js` |
@@ -383,15 +410,15 @@ src/
 | Sửa chart / thêm indicator | `ChartPanel.jsx` + `useKlineData.js` |
 | Sửa sidebar / watchlist | `CoinList.jsx` + `watchlistStore.js` |
 | Sửa price bar / funding | `PriceCard.jsx` + `useFundingRate.js` |
-| Sửa alert / âm thanh | `AlertPanel.jsx` + `alertStore.js` + `useAlertChecker.js` |
+| Sửa alert / history / âm thanh | `AlertPanel.jsx` + `alertStore.js` + `useAlertChecker.js` |
 | Sửa Order Book | `OrderBookPanel.jsx` + `useOrderBook.js` |
 | Sửa API / network | `binanceApi.js` |
 | Thêm tính năng mới toàn app | `App.jsx` + `chartStore.js` |
 
 **Gợi ý câu prompt mở đầu phiên tới:**
 ```
-Đây là active-context-v21.md theo dõi dự án Binance Tracker.
-Đọc kỹ "Bug đã sửa" trước khi viết code.
+Đây là active-context-v22.md theo dõi dự án Binance Tracker.
+Đọc kỹ "Bug đã sửa" và "Pattern quan trọng" trước khi viết code.
 Nhiệm vụ hôm nay: [mô tả]
 ```
 

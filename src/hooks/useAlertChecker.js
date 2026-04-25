@@ -49,6 +49,7 @@ export function useAlertChecker() {
   const alerts = useAlertStore(s => s.alerts)
   const markTriggered = useAlertStore(s => s.markTriggered)
   const setNotifGranted = useAlertStore(s => s.setNotifGranted)
+  const addNotifHistory = useAlertStore(s => s.addNotifHistory)
   const alertVolume = useChartStore(s => s.alertVolume)
   const alertTone = useChartStore(s => s.alertTone)
 
@@ -71,6 +72,9 @@ export function useAlertChecker() {
   const markTriggeredRef = useRef(markTriggered)
   useEffect(() => { markTriggeredRef.current = markTriggered }, [markTriggered])
 
+  const addNotifHistoryRef = useRef(addNotifHistory)
+  useEffect(() => { addNotifHistoryRef.current = addNotifHistory }, [addNotifHistory])
+
   const soundRef = useRef({ volume: alertVolume, tone: alertTone })
   useEffect(() => { soundRef.current = { volume: alertVolume, tone: alertTone } }, [alertVolume, alertTone])
 
@@ -91,6 +95,16 @@ export function useAlertChecker() {
       if (!hit) return
 
       markTriggeredRef.current(alert.id)
+
+      // Ghi vào notification history
+      addNotifHistoryRef.current({
+        id: alert.id,
+        symbol: alert.symbol,
+        targetPrice: alert.targetPrice,
+        triggeredPrice: currentPrice,
+        direction: alert.direction,
+        triggeredAt: Date.now(),
+      })
 
       // Phát âm với settings hiện tại
       playBeep(alert.direction, soundRef.current.tone, soundRef.current.volume)

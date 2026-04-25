@@ -13,6 +13,15 @@ export const useAlertStore = create(
     (set, get) => ({
       alerts: [],
       notifGranted: false,
+      notifHistory: [],   // log các alert đã trigger
+
+      addNotifHistory: (entry) =>
+        set(s => ({
+          // Giữ tối đa 100 bản ghi gần nhất, mới nhất trên đầu
+          notifHistory: [entry, ...s.notifHistory].slice(0, 100),
+        })),
+
+      clearNotifHistory: () => set({ notifHistory: [] }),
 
       addAlert: (symbol, targetPrice, direction) => {
         const alert = {
@@ -47,6 +56,7 @@ export const useAlertStore = create(
       name: 'binance-tracker-alerts',
       partialize: (state) => ({
         alerts: state.alerts,
+        notifHistory: state.notifHistory,
         // notifGranted KHÔNG persist — browser tự nhớ permission
       }),
     }

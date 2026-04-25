@@ -1,6 +1,6 @@
 // src/App.jsx — UI redesign + Mobile responsive
 
-import { useState } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import CoinList from './components/CoinList'
 import ChartPanel from './components/ChartPanel'
 import SecondaryChartPanel from './components/SecondaryChartPanel'
@@ -284,6 +284,89 @@ function MobileBottomNav({ activeTab, onTabChange, alertCount }) {
   )
 }
 
+// ── Resizable Divider ────────────────────────────────────────────────────────
+function ResizableDualChart() {
+  const [splitPct, setSplitPct] = useState(50)       // % width của chart trái
+  const isDraggingRef = useRef(false)
+  const containerRef = useRef(null)
+
+  const onMouseDown = useCallback((e) => {
+    e.preventDefault()
+    isDraggingRef.current = true
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }, [])
+
+  useEffect(() => {
+    function onMouseMove(e) {
+      if (!isDraggingRef.current || !containerRef.current) return
+      const rect = containerRef.current.getBoundingClientRect()
+      const pct = ((e.clientX - rect.left) / rect.width) * 100
+      // Clamp giữa 20% và 80% để 2 chart không bị quá nhỏ
+      setSplitPct(Math.min(80, Math.max(20, pct)))
+    }
+    function onMouseUp() {
+      if (!isDraggingRef.current) return
+      isDraggingRef.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [])
+
+  return (
+    <div ref={containerRef} className="flex-1 flex min-w-0 min-h-0 relative">
+      {/* Chart chính */}
+      <div style={{ width: `${splitPct}%` }} className="min-w-0 min-h-0 flex-shrink-0">
+        <ChartPanel />
+      </div>
+
+      {/* Divider handle */}
+      <div
+        onMouseDown={onMouseDown}
+        className="flex-shrink-0 flex items-center justify-center group"
+        style={{
+          width: 6,
+          cursor: 'col-resize',
+          background: '#161b22',
+          zIndex: 10,
+          position: 'relative',
+        }}
+      >
+        {/* Đường kẻ giữa */}
+        <div
+          className="w-px h-full transition-colors duration-150"
+          style={{ background: '#2b3139' }}
+        />
+        {/* Grip dots — hiện khi hover */}
+        <div
+          className="absolute inset-0 flex flex-col items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+          style={{ pointerEvents: 'none' }}
+        >
+          {[0, 1, 2, 3].map(i => (
+            <div key={i} className="w-1 h-1 rounded-full" style={{ background: '#a855f7' }} />
+          ))}
+        </div>
+        {/* Highlight line khi hover */}
+        <div
+          className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity"
+          style={{ background: '#a855f712' }}
+        />
+      </div>
+
+      {/* Chart phụ TF2 */}
+      <div style={{ flex: 1 }} className="min-w-0 min-h-0">
+        <SecondaryChartPanel />
+      </div>
+    </div>
+  )
+}
+
 // ── Main App ────────────────────────────────────────────────────────────────
 export default function App() {
   const [rightPanel, setRightPanel] = useState(null)
@@ -438,14 +521,7 @@ export default function App() {
             {/* ── Chart area: single hoặc dual ── */}
             <div className="flex-1 flex min-w-0 min-h-0">
               {showDualChart ? (
-                <>
-                  <div className="flex-1 min-w-0 min-h-0">
-                    <ChartPanel />
-                  </div>
-                  <div className="flex-1 min-w-0 min-h-0">
-                    <SecondaryChartPanel />
-                  </div>
-                </>
+                <ResizableDualChart />
               ) : (
                 <div className="flex-1 min-w-0 min-h-0">
                   <ChartPanel />

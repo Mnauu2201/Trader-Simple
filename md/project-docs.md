@@ -39,6 +39,8 @@ Binance WebSocket API  ───────────────────
    │    │                                            │
 Sidebar  Chart (main TF)  Chart (TF2 — v21)    Right Panel
 (giá)  (nến + indicators)  (nến + MA/EMA)    (OrderBook/Trades/Alerts)
+             │                   │
+         [Resizable divider — v22: kéo chuột, clamp 20–80%]
 ```
 
 Đây là **pure frontend app** — không cần backend, không cần database, không cần server riêng.
@@ -93,12 +95,12 @@ Futures: wss://fstream.binance.com/ws/
 BINANCE-TRACKER/
 ├── src/
 │   ├── components/
-│   │   ├── App.jsx                      — Root layout, AlertEngine, right panel toggle, dual chart layout ← v21
+│   │   ├── App.jsx                      — Root layout, AlertEngine, right panel toggle, ResizableDualChart ← v22
 │   │   ├── ChartPanel.jsx               — Chart chính: nến + tất cả indicators + sub-panels ← v21 (+2TF button)
 │   │   ├── SecondaryChartPanel.jsx      — Chart TF2: nến + MA20/50 + EMA9/21 + tooltip + scroll ← v21 MỚI
 │   │   ├── CoinList.jsx                 — Sidebar: search, sort, tabs Market/Gainers/Losers/Watchlist
 │   │   ├── PriceCard.jsx                — Header bar giá: OHLV, Mark/Index Price, Funding, OI
-│   │   ├── AlertPanel.jsx               — Price alerts: thêm/xóa, sound settings, persist
+│   │   ├── AlertPanel.jsx               — Price alerts + tab History (log trigger) ← v22
 │   │   ├── OrderBookPanel.jsx           — Order Book: top 5 bid/ask, depth bar, spread
 │   │   ├── RecentTradesPanel.jsx        — Recent Trades: 30 aggTrades, direction indicator
 │   │   ├── DrawingToolbar.jsx           — Drawing tools toolbar (dọc bên trái chart)
@@ -107,7 +109,7 @@ BINANCE-TRACKER/
 │   ├── hooks/
 │   │   ├── useBinanceWS.js              — WS ticker stream (batch 40 symbols/conn, stagger 200ms)
 │   │   ├── useKlineData.js              — WS + REST kline (retry, reconnect, infinite scroll, takerBuyVol)
-│   │   ├── useAlertChecker.js           — Nền: kiểm tra giá vs alerts, phát beep, soundRef pattern
+│   │   ├── useAlertChecker.js           — Nền: check giá vs alerts, beep, ghi notifHistory ← v22
 │   │   ├── useFundingRate.js            — WS @markPrice + OI polling 30s (auto-reconnect)
 │   │   ├── useFundingRateHistory.js     — REST 100 chu kỳ funding rate, poll 8h ← v20
 │   │   ├── useOrderBook.js              — WS @depth5 + RAF batch + auto-reconnect
@@ -119,7 +121,7 @@ BINANCE-TRACKER/
 │   │   └── useLiquidations.js           — WS !forceOrder@arr, lọc $10K, auto-reconnect ← v19
 │   │
 │   ├── store/
-│   │   ├── alertStore.js                — Alerts list (persist localStorage)
+│   │   ├── alertStore.js                — Alerts list + notifHistory (persist localStorage) ← v22
 │   │   ├── chartStore.js                — Symbol, interval, market, indicators, showDualChart, interval2 ← v21
 │   │   ├── marketStore.js               — Prices (_prices module-level + RAF batch)
 │   │   └── watchlistStore.js            — Watchlist cá nhân (persist localStorage, max 50 coin)
@@ -185,6 +187,8 @@ Binance WebSocket @kline_<interval2>
 
 Infinite scroll backward: giống chart chính (loadMoreRef pattern)
 KHÔNG sync timescale với main chart (2 timeframe khác nhau)
+
+Layout: ResizableDualChart (v22) — kéo divider điều chỉnh split 20–80%
 ```
 
 ### Order Book
@@ -241,6 +245,24 @@ Binance WebSocket !forceOrder@arr (Futures global stream)
   Max 200 markers, BUY liq = arrowUp đỏ, SELL liq = arrowDown xanh
 ```
 
+### Alert + Notifications History — v22
+
+```
+useAlertChecker (chạy nền ở root App)
+  prices thay đổi → check mọi active alert
+    hit? → markTriggered(id)
+         → playBeep(direction, tone, volume)
+         → new Notification(title, body)
+         → addNotifHistory({ symbol, targetPrice, triggeredPrice, direction, triggeredAt })
+                                    │
+                                    ▼
+                            alertStore.notifHistory (tối đa 100, persist localStorage)
+                                    │
+                                    ▼
+                            AlertPanel tab "History" → HistoryRow
+                            (symbol, direction, target→triggered price, timestamp, % diff)
+```
+
 ---
 
 ## 5. Mô tả từng file
@@ -260,8 +282,8 @@ WS `@depth5@100ms` (cập nhật 10 lần/giây). Dùng RAF batch để tránh s
 ### `src/hooks/useRecentTrades.js`
 WS `@aggTrade`. Buffer tối đa 30 trades (prepend mới vào đầu). RAF batch tránh setState mỗi trade khi thị trường volatile (có thể 50+ trades/giây). Auto-reconnect 5s.
 
-### `src/hooks/useAlertChecker.js`
-Chạy nền ở root App. Dùng `soundRef` (useRef) để đọc alertVolume/alertTone mới nhất — tránh stale closure. Phát beep qua Web Audio API khi giá chạm target.
+### `src/hooks/useAlertChecker.js` ← v22
+Chạy nền ở root App. Dùng `soundRef` (useRef) để đọc alertVolume/alertTone mới nhất — tránh stale closure. Dùng `addNotifHistoryRef` (useRef) cùng pattern. Phát beep qua Web Audio API và ghi log vào `alertStore.notifHistory` khi giá chạm target.
 
 ### `src/hooks/useFundingRate.js`
 REST snapshot + WS `@markPrice` realtime + OI polling mỗi 30s. `cancelledRef` pattern để tránh update sau cleanup.
@@ -282,19 +304,22 @@ REST fetch Taker Buy/Sell Volume từ endpoint `/futures/data/takerlongshortRati
 Core perf pattern: `_prices` object sống ngoài Zustand (mutate in-place, O(1)), Zustand chỉ giữ `_tick`. RAF batch tối đa 60 re-render/giây dù nhận bao nhiêu WS message.
 
 ### `src/store/chartStore.js` ← v21
-Zustand + persist: symbol, interval, market, showMA, showEMA, showRSI, showVolume, showMACD, showBB, showOI, showTakerVol, showCVD, showLiq, showFR, **showDualChart, interval2**, alertVolume, alertTone.
+Zustand + persist: symbol, interval, market, showMA, showEMA, showRSI, showVolume, showMACD, showBB, showOI, showTakerVol, showCVD, showLiq, showFR, showDualChart, interval2, alertVolume, alertTone.
 
-### `src/store/alertStore.js`
-Zustand + persist: danh sách alerts với trạng thái triggered. `nextId` dùng timestamp để tránh trùng sau reload.
+### `src/store/alertStore.js` ← v22
+Zustand + persist: danh sách alerts với trạng thái triggered. `notifHistory` array tối đa 100 bản ghi (persist localStorage). `nextId` dùng timestamp để tránh trùng sau reload.
 
-### `src/components/App.jsx` ← v21
-Root layout. `rightPanel` state (null | 'orderbook' | 'trades' | 'alerts') kiểm soát exclusive toggle. `AlertEngine` component chạy `useAlertChecker` ở root để luôn active. **Dual chart layout: khi `showDualChart=true`, chia 50/50 ngang giữa ChartPanel và SecondaryChartPanel.**
+### `src/components/App.jsx` ← v22
+Root layout. `rightPanel` state (null | 'orderbook' | 'trades' | 'alerts') kiểm soát exclusive toggle. `AlertEngine` component chạy `useAlertChecker` ở root để luôn active. **Dual chart layout: `ResizableDualChart` component — kéo divider chuột, clamp 20–80%, grip dots màu tím khi hover.**
 
 ### `src/components/ChartPanel.jsx` ← v21
-Chart chính với lightweight-charts v5. Indicators: MA(20/50/200), EMA(9/21), BB(20,2), RSI(14), MACD(12,26,9), Volume. Sub-panels: OI History, Taker Volume, CVD, Funding Rate History (v20). Liquidation markers trên chart (v19). OHLCV tooltip khi hover. Sync timescale giữa main/RSI/MACD/OI/TVol/CVD/FR panels. **v21: thêm nút 2TF vào toolbar để toggle dual chart.**
+Chart chính với lightweight-charts v5. Indicators: MA(20/50/200), EMA(9/21), BB(20,2), RSI(14), MACD(12,26,9), Volume. Sub-panels: OI History, Taker Volume, CVD, Funding Rate History (v20). Liquidation markers trên chart (v19). OHLCV tooltip khi hover. Sync timescale giữa main/RSI/MACD/OI/TVol/CVD/FR panels. v21: thêm nút 2TF vào toolbar để toggle dual chart.
 
-### `src/components/SecondaryChartPanel.jsx` ← v21 MỚI
-Chart TF2 độc lập. Cùng symbol + market với chart chính, **interval riêng** (mặc định 1h, có picker đầy đủ, màu tím để phân biệt TF1). Tính năng: nến + volume + MA20/MA50 + EMA9/EMA21 (toggle local riêng) + OHLCV tooltip + infinite scroll backward. KHÔNG sync timescale với main chart (2 timeframe khác nhau).
+### `src/components/SecondaryChartPanel.jsx` ← v21
+Chart TF2 độc lập. Cùng symbol + market với chart chính, **interval riêng** (mặc định 1h, có picker đầy đủ, màu tím để phân biệt TF1). Tính năng: nến + volume + MA20/MA50 + EMA9/EMA21 (toggle local riêng) + OHLCV tooltip + infinite scroll backward. KHÔNG sync timescale với main chart.
+
+### `src/components/AlertPanel.jsx` ← v22
+Thêm/xóa price alert. SoundSettings: slider volume + chọn tone + nút preview. **Tab "History": log tất cả lần alert đã trigger — hiện symbol, direction, giá mục tiêu → giá thực tế, timestamp, % chênh lệch. Badge đếm số lần trigger. Nút xóa history.**
 
 ### `src/components/PriceCard.jsx`
 Header bar giá. Futures: thêm Mark Price, Index Price, Funding Rate%, countdown đến lần funding tiếp theo, Open Interest, Funding Rate History Sparkline (10 chu kỳ).
@@ -305,14 +330,11 @@ Top 5 ask (đỏ) + spread row + top 5 bid (xanh). Depth bar = cumulative qty / 
 ### `src/components/RecentTradesPanel.jsx`
 30 aggTrades mới nhất. ▲ xanh = buyer taker (lực mua), ▼ đỏ = seller taker (lực bán). Hiển thị price, qty, timestamp HH:MM:SS.
 
-### `src/components/AlertPanel.jsx`
-Thêm/xóa price alert. SoundSettings: slider volume (0-100%) + chọn tone (Sine/Square/Sawtooth/Triangle) + nút preview. Persist qua chartStore.
-
 ### `src/components/DrawingToolbar.jsx`
 Toolbar vẽ tay trên chart. Các công cụ: TrendLine, HorizontalLine, FibRetracement. Hiển thị dọc bên trái chart, toggle active tool. Dùng kết hợp với `useDrawingTools.js`.
 
 ### `src/components/LongShortPanel.jsx`
-Panel Long/Short Ratio với 3 loại: Global Accounts, Top Trader Accounts, Top Trader Positions. Mỗi loại có GaugeBar trực quan, sparkline 24 điểm, và SignalBadge tự động (Đám đông quá Long/Short/Cân bằng). Collapse riêng từng section.
+Panel Long/Short Ratio với 3 loại: Global Accounts, Top Trader Accounts, Top Trader Positions. Mỗi loại có GaugeBar trực quan, sparkline 24 điểm, và SignalBadge tự động. Collapse riêng từng section.
 
 ### `src/hooks/useDrawingTools.js`
 Quản lý state drawing tools (active tool, danh sách shapes đã vẽ). Xử lý mouse events trên canvas overlay để vẽ TrendLine, HLine, Fibonacci Retracement.

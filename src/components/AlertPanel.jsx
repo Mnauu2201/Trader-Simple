@@ -268,6 +268,49 @@ function AlertRow({ alert }) {
   )
 }
 
+function fmtDateTime(ts) {
+  const d = new Date(ts)
+  const pad = n => String(n).padStart(2, '0')
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+// ── History Row ───────────────────────────────────────────────────────────
+function HistoryRow({ entry }) {
+  const baseName = entry.symbol.replace('USDT', '')
+  const isAbove = entry.direction === 'above'
+  const diff = entry.triggeredPrice - entry.targetPrice
+  const diffPct = (Math.abs(diff) / entry.targetPrice * 100).toFixed(3)
+
+  return (
+    <div className="px-3 py-2.5 border-b border-[#1a1d26]/60 hover:bg-[#0d1117] transition-colors">
+      {/* Row 1: coin + direction + time */}
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-1.5">
+          <span className={`text-[9px] font-bold px-1 rounded ${isAbove ? 'bg-[#0ecb8122] text-[#0ecb81]' : 'bg-[#f6465d22] text-[#f6465d]'}`}>
+            {isAbove ? '▲' : '▼'}
+          </span>
+          <span className="text-[11px] font-semibold text-white">{baseName}/USDT</span>
+        </div>
+        <span className="text-[9px] text-[#5e6673]">{fmtDateTime(entry.triggeredAt)}</span>
+      </div>
+
+      {/* Row 2: target → triggered price */}
+      <div className="flex items-center gap-1.5 text-[10px]">
+        <span className="text-[#5e6673]">Mục tiêu</span>
+        <span className="text-[#eaecef] font-medium">{fmtPrice(entry.targetPrice)}</span>
+        <svg width="10" height="10" viewBox="0 0 10 10" className="text-[#5e6673] flex-shrink-0">
+          <path d="M2 5h6M6 3l2 2-2 2" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className="text-[#5e6673]">Giá kích hoạt</span>
+        <span className={`font-semibold ${isAbove ? 'text-[#0ecb81]' : 'text-[#f6465d]'}`}>
+          {fmtPrice(entry.triggeredPrice)}
+        </span>
+        <span className="text-[#5e6673] ml-auto text-[9px]">±{diffPct}%</span>
+      </div>
+    </div>
+  )
+}
+
 // ── Tooltip hướng dẫn sử dụng ─────────────────────────────────────────────
 function HelpTooltip() {
   const [show, setShow] = useState(false)
@@ -350,6 +393,10 @@ function HelpTooltip() {
 export default function AlertPanel({ onClose }) {
   const alerts = useAlertStore(s => s.alerts)
   const clearTriggered = useAlertStore(s => s.clearTriggered)
+  const notifHistory = useAlertStore(s => s.notifHistory)
+  const clearNotifHistory = useAlertStore(s => s.clearNotifHistory)
+
+  const [tab, setTab] = useState('alerts')  // 'alerts' | 'history'
 
   const active = alerts.filter(a => !a.triggered)
   const triggered = alerts.filter(a => a.triggered)
@@ -372,51 +419,118 @@ export default function AlertPanel({ onClose }) {
           className="text-[#5e6673] hover:text-white transition-colors text-sm">✕</button>
       </div>
 
-      {/* Add form */}
-      <AddAlertForm />
-
-      {/* Sound settings */}
-      <SoundSettings />
-
-      {/* Alert list */}
-      <div className="flex-1 overflow-y-auto scrollbar-thin">
-
-        {/* Active alerts */}
-        {active.length > 0 && (
-          <>
-            <div className="px-3 py-1.5 text-[9px] text-[#5e6673] uppercase tracking-wider font-medium">
-              Đang chờ ({active.length})
-            </div>
-            {active.map(a => <AlertRow key={a.id} alert={a} />)}
-          </>
-        )}
-
-        {/* Triggered alerts */}
-        {triggered.length > 0 && (
-          <>
-            <div className="flex items-center justify-between px-3 py-1.5">
-              <span className="text-[9px] text-[#5e6673] uppercase tracking-wider font-medium">
-                Đã kích hoạt ({triggered.length})
+      {/* Tabs */}
+      <div className="flex border-b border-[#1a1d26] flex-shrink-0">
+        {[
+          { id: 'alerts', label: 'Alerts' },
+          { id: 'history', label: 'History', badge: notifHistory.length > 0 ? notifHistory.length : null },
+        ].map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className="flex items-center gap-1.5 px-3 py-2 text-[11px] font-medium transition-colors relative"
+            style={{
+              color: tab === t.id ? '#f0b90b' : '#566475',
+              borderBottom: tab === t.id ? '2px solid #f0b90b' : '2px solid transparent',
+            }}
+          >
+            {t.label}
+            {t.badge && (
+              <span className="text-[8px] font-bold px-1 py-0.5 rounded-full"
+                style={{ background: '#f0b90b22', color: '#f0b90b' }}>
+                {t.badge > 99 ? '99+' : t.badge}
               </span>
-              <button onClick={clearTriggered}
-                className="text-[9px] text-[#f6465d] hover:text-[#f6465dcc] transition-colors">
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* ── TAB: Alerts ── */}
+      {tab === 'alerts' && (
+        <>
+          {/* Add form */}
+          <AddAlertForm />
+
+          {/* Sound settings */}
+          <SoundSettings />
+
+          {/* Alert list */}
+          <div className="flex-1 overflow-y-auto scrollbar-thin">
+
+            {/* Active alerts */}
+            {active.length > 0 && (
+              <>
+                <div className="px-3 py-1.5 text-[9px] text-[#5e6673] uppercase tracking-wider font-medium">
+                  Đang chờ ({active.length})
+                </div>
+                {active.map(a => <AlertRow key={a.id} alert={a} />)}
+              </>
+            )}
+
+            {/* Triggered alerts */}
+            {triggered.length > 0 && (
+              <>
+                <div className="flex items-center justify-between px-3 py-1.5">
+                  <span className="text-[9px] text-[#5e6673] uppercase tracking-wider font-medium">
+                    Đã kích hoạt ({triggered.length})
+                  </span>
+                  <button onClick={clearTriggered}
+                    className="text-[9px] text-[#f6465d] hover:text-[#f6465dcc] transition-colors">
+                    Xóa tất cả
+                  </button>
+                </div>
+                {triggered.map(a => <AlertRow key={a.id} alert={a} />)}
+              </>
+            )}
+
+            {/* Empty state */}
+            {alerts.length === 0 && (
+              <div className="flex flex-col items-center justify-center h-32 gap-2">
+                <span className="text-2xl">🔕</span>
+                <span className="text-[#5e6673] text-xs text-center px-4">
+                  Chưa có alert nào<br />Thêm alert để nhận thông báo khi giá chạm ngưỡng
+                </span>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ── TAB: History ── */}
+      {tab === 'history' && (
+        <div className="flex flex-col flex-1 min-h-0">
+          {/* History header */}
+          <div className="flex items-center justify-between px-3 py-2 border-b border-[#1a1d26] flex-shrink-0">
+            <span className="text-[10px] text-[#5e6673]">
+              {notifHistory.length > 0 ? `${notifHistory.length} lần kích hoạt (tối đa 100)` : 'Chưa có lịch sử'}
+            </span>
+            {notifHistory.length > 0 && (
+              <button
+                onClick={clearNotifHistory}
+                className="text-[9px] text-[#f6465d] hover:text-[#f6465dcc] transition-colors"
+              >
                 Xóa tất cả
               </button>
-            </div>
-            {triggered.map(a => <AlertRow key={a.id} alert={a} />)}
-          </>
-        )}
-
-        {/* Empty state */}
-        {alerts.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-32 gap-2">
-            <span className="text-2xl">🔕</span>
-            <span className="text-[#5e6673] text-xs text-center px-4">
-              Chưa có alert nào<br />Thêm alert để nhận thông báo khi giá chạm ngưỡng
-            </span>
+            )}
           </div>
-        )}
-      </div>
+
+          {/* History list */}
+          <div className="flex-1 overflow-y-auto scrollbar-thin">
+            {notifHistory.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-40 gap-2">
+                <span className="text-2xl">📋</span>
+                <span className="text-[#5e6673] text-xs text-center px-4">
+                  Chưa có lịch sử<br />Lịch sử sẽ lưu khi alert được kích hoạt
+                </span>
+              </div>
+            ) : (
+              notifHistory.map((entry, idx) => (
+                <HistoryRow key={`${entry.id}-${entry.triggeredAt}-${idx}`} entry={entry} />
+              ))
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
