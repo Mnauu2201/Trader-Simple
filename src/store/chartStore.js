@@ -1,4 +1,4 @@
-// src/store/chartStore.js — v12: thêm showEMA + alertSound settings
+// src/store/chartStore.js — v19: thêm showLiq (Liquidation markers)
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
@@ -19,6 +19,7 @@ export const useChartStore = create(
       showOI: false,
       showTakerVol: false,
       showCVD: false,
+      showLiq: false,   // Liquidation markers trên chart (Futures only)
 
       // Alert sound settings
       alertVolume: 0.4,          // 0.0 – 1.0
@@ -36,6 +37,7 @@ export const useChartStore = create(
       setShowOI:  (v) => set({ showOI: v }),
       setShowTakerVol: (v) => set({ showTakerVol: v }),
       setShowCVD: (v) => set({ showCVD: v }),
+      setShowLiq: (v) => set({ showLiq: v }),   // ← v19
       setAlertVolume: (v) => set({ alertVolume: v }),
       setAlertTone: (v) => set({ alertTone: v }),
     }),
@@ -54,6 +56,7 @@ export const useChartStore = create(
         showOI: state.showOI,
         showTakerVol: state.showTakerVol,
         showCVD: state.showCVD,
+        showLiq: state.showLiq,   // ← v19
         alertVolume: state.alertVolume,
         alertTone: state.alertTone,
       }),

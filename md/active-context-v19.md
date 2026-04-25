@@ -1,5 +1,5 @@
-# Active Context v17
-## Trạng thái: Cập nhật lần 17 ✅
+# Active Context v19
+## Trạng thái: Cập nhật lần 19 ✅
 > **Phiên làm việc tiếp theo:** Đọc mục "📦 Gửi file gì trong phiên tới" ở cuối file này trước khi bắt đầu.
 
 ---
@@ -110,7 +110,28 @@
 | **Persist showTakerVol trong chartStore** | **v17** |
 | **Label B/S vol + % Buy realtime trên panel header** | **v17** |
 | **Sell volume vẽ âm (−sellVol) để tách biệt trực quan** | **v17** |
-| **binanceApi.js cần thêm getTakerBuySellVol** | **v17 (TODO)** |
+| **binanceApi.js: getTakerBuySellVol — endpoint /futures/data/takerlongshortRatio** | **v17** |
+| **Vite proxy /futures-data → fapi.binance.com (bypass CORS localhost)** | **v17** |
+| **CVD — Cumulative Volume Delta panel (AreaSeries hồng)** | **v18** |
+| **CVD tính từ kline takerBuyVol — không cần endpoint mới** | **v18** |
+| **CVD O(1) incremental update per WS tick** | **v18** |
+| **CVD recalc khi load nến cũ hơn (onKlinePrepend)** | **v18** |
+| **Toggle button CVD (Spot + Futures)** | **v18** |
+| **Persist showCVD trong chartStore** | **v18** |
+| **binanceApi.js: getKlines expose takerBuyVol (index 9)** | **v18** |
+| **useKlineData.js: WS expose takerBuyVol (field k.V)** | **v18** |
+| **Zero line trong CVD chart** | **v18** |
+| **useLiquidations.js — WS `!forceOrder@arr` Futures** | **v19** |
+| **Liq markers tam giác trên chart (arrowUp/arrowDown)** | **v19** |
+| **Lọc liq theo ngưỡng $10K USD — tránh noise** | **v19** |
+| **BUY liq = đỏ arrowUp (short bị liq), SELL liq = xanh arrowDown (long bị liq)** | **v19** |
+| **Liq ≥ $500K hiện marker to hơn (size 2)** | **v19** |
+| **Text marker: `Liq $150K` / `Liq $1.2M`** | **v19** |
+| **Reset markers khi đổi symbol/interval/market** | **v19** |
+| **Tối đa 200 markers gần nhất (tránh memory)** | **v19** |
+| **Toggle button Liq trong toolbar (chỉ Futures)** | **v19** |
+| **Persist showLiq trong chartStore** | **v19** |
+| **Auto-reconnect WS 5s (cancelledRef pattern)** | **v19** |
 
 ---
 
@@ -184,93 +205,22 @@ ws.onclose = () => {
 ```js
 const soundRef = useRef({ volume: alertVolume, tone: alertTone })
 useEffect(() => { soundRef.current = { volume: alertVolume, tone: alertTone } }, [alertVolume, alertTone])
-playBeep(alert.direction, soundRef.current.tone, soundRef.current.volume)
 ```
+**Rule:** Mọi value cần đọc trong closure async/setInterval PHẢI dùng `useRef` pattern.
 
 ---
 
-### BUG #10 — OrderBook / RecentTrades setState 60-100fps gây lag (v13 design)
-**Fix đúng:** RAF batch với `pendingRef` / `bufferMapRef`. KHÔNG setState trực tiếp trong `ws.onmessage`.
+### BUG #10 — OI/TVol chart không sync đúng timescale (v16 fix)
+**Fix đúng:** Dùng `subscribeVisibleTimeRangeChange` + `setVisibleRange` (UTC time range).
+**Rule:** Sub-chart sync TIME range, KHÔNG sync logical range — logical index không tương đương giữa 2 chart có data length khác nhau.
 
 ---
 
-### BUG #11 — RecentTrades thứ tự lộn, duplicate, scroll không giới hạn (v13.1 fix)
-**Fix đúng (useRecentTrades.js):**
-```js
-const bufferMapRef = useRef(new Map())
-ws.onmessage = (event) => {
-  const trade = { id: d.a, price, qty, isBuyerMaker, time }
-  bufferMapRef.current.set(trade.id, trade)
-  scheduleRaf()
-}
-// Trong RAF: sort desc by id, slice 30, setTrades
-```
-
----
-
-### BUG #12 — OI / TV chart init với ref null (v16/v17 pattern)
-**Fix đúng:** `setTimeout(() => { if (!containerRef.current) return; ... }, 0)` — defer 1 tick sau conditional render.
-**Rule:** Mọi chart init cho panel conditional render PHẢI dùng setTimeout(0) + cancelled flag.
-
----
-
-### BUG #13 — OI chart dài hơn main chart (v16 fix)
-**Fix đúng:** Sau `setData`, gọi `mainChartRef.current.timeScale().getVisibleRange()` → `chart.timeScale().setVisibleRange(range)`.
-**Rule:** KHÔNG dùng `fitContent()` cho sub-chart. KHÔNG sync LogicalRange (index) — sync TimeRange (UTC timestamp).
-
----
-
-## 🗂️ Cấu trúc file hiện tại (v17)
-
-```
-src/
-├── components/
-│   ├── App.jsx               — Root layout, AlertEngine, right panel toggle
-│   ├── CoinList.jsx          — Sidebar: Thị trường/Tăng/Giảm/⭐ Watchlist
-│   ├── ChartPanel.jsx        — v17: +TVol panel (dual Histogram, sync, toggle)
-│   ├── PriceCard.jsx         — Giá + Funding + OI + Sparkline
-│   ├── AlertPanel.jsx        — Price alert + SoundSettings
-│   ├── OrderBookPanel.jsx    — Top 5 bid/ask + depth bar
-│   ├── RecentTradesPanel.jsx — 30 aggTrades (dedup, sort, no-scroll)
-│   ├── LongShortPanel.jsx    — 3 loại L/S ratio + sparkline + gauge
-│   └── IntervalSelector.jsx  — (deprecated)
-├── hooks/
-│   ├── useBinanceWS.js       — WS ticker (batch 40/conn, stagger 200ms)
-│   ├── useKlineData.js       — WS + REST kline (retry 3 + reconnect)
-│   ├── useAlertChecker.js    — Background alert (soundRef pattern)
-│   ├── useFundingRate.js     — WS markPrice + OI poll 30s (cancelledRef)
-│   ├── useOrderBook.js       — WS @depth5 + RAF batch + reconnect
-│   ├── useRecentTrades.js    — WS @aggTrade + Map dedup + RAF
-│   ├── useLongShortRatio.js  — REST poll 30s, Promise.allSettled
-│   ├── useOIHistory.js       — v16: infinite scroll backward + poll 5m
-│   └── useTakerVolume.js     — v17: infinite scroll backward + poll 1m
-├── store/
-│   ├── marketStore.js        — _prices module-level + RAF (_tick)
-│   ├── chartStore.js         — v17: +showTakerVol, +setShowTakerVol (persist)
-│   ├── alertStore.js         — alerts list (persist)
-│   └── watchlistStore.js     — pinned symbols (persist, max 50)
-├── services/
-│   └── binanceApi.js         — v17: cần thêm getTakerBuySellVol (xem TODO bên dưới)
-├── index.css
-└── main.jsx
-```
-
----
-
-## ⚠️ TODO còn lại của v17 — Bắt buộc làm trước khi dùng TVol
-
-### Thêm `getTakerBuySellVol` vào `binanceApi.js`
-
-```js
-// Thêm hàm này vào src/services/binanceApi.js
-export async function getTakerBuySellVol(symbol, period, limit = 500, endTime = null) {
-    let url = `/futures/data/takerbuysellevol?symbol=${symbol}&period=${period}&limit=${limit}`
-    if (endTime) url += `&endTime=${endTime}`
-    return fetchFutures(url)  // dùng fetchFutures wrapper có sẵn (fallback fapi/fapi1/fapi2)
-}
-```
-
-> `fetchFutures` là wrapper đã có trong `binanceApi.js` từ v10, có 3 URL fallback tự động.
+### BUG #11 — TVol endpoint CORS + 404 (v17 fix)
+**Fix đúng:**
+- Vite proxy: `/futures-data` → `https://fapi.binance.com`
+- Đúng tên endpoint: `/futures/data/takerlongshortRatio` (không phải `takerbuysellevol`)
+- Dùng `import.meta.env.DEV` để switch URL dev/prod
 
 ---
 
@@ -289,6 +239,7 @@ export async function getTakerBuySellVol(symbol, period, limit = 500, endTime = 
 | OI History poll mỗi 5 phút | data thay đổi chậm, tránh rate limit |
 | Taker Volume poll mỗi 1 phút | cập nhật nhanh hơn OI nhưng không có WS |
 | EMA state lưu qua `emaStateRef` | O(1) per tick |
+| CVD state lưu qua `cvdStateRef` | O(1) per tick |
 | alertVolume/alertTone đọc qua `soundRef` (useRef) | tránh stale closure |
 | OrderBook/RecentTrades WS → RAF batch | @depth5 10msg/s, @aggTrade 50+msg/s |
 | RecentTrades dùng Map keyed by aggId | dedup tự động |
@@ -297,9 +248,10 @@ export async function getTakerBuySellVol(symbol, period, limit = 500, endTime = 
 | StarButton tách component riêng | tránh toàn list re-render khi hover star |
 | L/S Ratio dùng Promise.allSettled | topLongShort chỉ có cho coin lớn |
 | L/S + OI History poll 30s/5m | không có WS stream, tránh rate limit |
-| Sub-chart (OI/TVol) dùng setTimeout(0) để init | đảm bảo DOM mount trước khi createChart |
+| Sub-chart (OI/TVol/CVD) dùng setTimeout(0) để init | đảm bảo DOM mount trước khi createChart |
 | Sub-chart sync TimeRange (UTC), không sync LogicalRange | LogicalRange không tương đương giữa 2 chart có data length khác nhau |
 | Sub-chart setData → setVisibleRange từ main chart | không fitContent() |
+| CVD O(1): chỉ tính delta của nến hiện tại | không recalc toàn bộ mỗi WS tick |
 
 ---
 
@@ -312,8 +264,48 @@ export async function getTakerBuySellVol(symbol, period, limit = 500, endTime = 
 | BB (20,2) | ChartPanel.jsx | `calcBB` full + `calcBBIncr` slice(-20) per tick |
 | RSI (14) | ChartPanel.jsx | Full seed, O(1) Wilder smoothing per tick |
 | MACD (12,26,9) | ChartPanel.jsx | Full EMA recalc khi load, O(1) per tick |
+| CVD | ChartPanel.jsx | `calcCVDFull` khi load/prepend, O(1) per tick via `cvdStateRef` |
 | OI History | useOIHistory.js | REST fetch, infinite scroll backward, poll 5m |
 | Taker Volume | useTakerVolume.js | REST fetch, infinite scroll backward, poll 1m |
+
+---
+
+## 🗺️ Cấu trúc file hiện tại
+
+```
+src/
+├── components/
+│   ├── App.jsx
+│   ├── CoinList.jsx
+│   ├── ChartPanel.jsx        — v19: +useLiquidations, +liqMarkersRef, +Liq button toolbar
+│   ├── PriceCard.jsx
+│   ├── AlertPanel.jsx
+│   ├── OrderBookPanel.jsx
+│   ├── RecentTradesPanel.jsx
+│   ├── DrawingToolbar.jsx
+│   └── LongShortPanel.jsx
+├── hooks/
+│   ├── useBinanceWS.js
+│   ├── useKlineData.js       — v18: +takerBuyVol field trong WS candle (k.V)
+│   ├── useAlertChecker.js
+│   ├── useFundingRate.js
+│   ├── useOrderBook.js
+│   ├── useRecentTrades.js
+│   ├── useLongShortRatio.js
+│   ├── useOIHistory.js
+│   ├── useTakerVolume.js
+│   ├── useDrawingTools.js
+│   └── useLiquidations.js    — v19: WS !forceOrder@arr, lọc $10K, auto-reconnect
+├── store/
+│   ├── marketStore.js
+│   ├── chartStore.js         — v19: +showLiq, +setShowLiq, +persist showLiq
+│   ├── alertStore.js
+│   └── watchlistStore.js
+├── services/
+│   └── binanceApi.js         — v18: getKlines expose takerBuyVol (index 9), +getTakerBuySellVol
+├── index.css
+└── main.jsx
+```
 
 ---
 
@@ -327,46 +319,32 @@ export async function getTakerBuySellVol(symbol, period, limit = 500, endTime = 
 - v15: Long/Short Ratio (3 loại, sparkline, gauge, signal badge)
 - v16: OI History Chart (AreaSeries, sync timescale, infinite scroll)
 - v17: Taker Buy/Sell Volume Panel (dual histogram, sync, infinite scroll)
+- v18: CVD — Cumulative Volume Delta (AreaSeries, O(1) update, sync timescale)
+- v19: Liquidation Tracker (WS markers tam giác, lọc $10K, toggle Liq button)
 
 ---
 
-### 🔲 Tiếp theo — Priority cao (v18)
+### 🔲 Tiếp theo — Priority cao (v20)
 
-#### [PRIORITY 1] CVD — Cumulative Volume Delta
-**Mục đích:** Tổng tích lũy (buy taker − sell taker). Divergence CVD vs giá = tín hiệu mạnh nhất. Giá tăng nhưng CVD giảm → lực mua suy yếu.
-
-**Files cần sửa:**
-- `ChartPanel.jsx` — tính từ kline data (dùng takerBuyBaseAssetVolume đã có trong kline response)
-- Vẽ AreaSeries riêng dưới TVol hoặc overlay
-
-**Notes:**
-- Kline field: `takerBuyBaseAssetVolume` (index 9 trong response Binance)
-- `cvd[i] = cvd[i-1] + takerBuyVol[i] - (totalVol[i] - takerBuyVol[i])`
-- Lưu state qua `cvdStateRef` (pattern giống emaStateRef)
-- Không cần endpoint mới — tính từ kline data đã có sẵn
-- Thêm `showCVD` vào chartStore + persist
-
----
-
-#### [PRIORITY 2] Liquidation Tracker
-**Mục đích:** Forced liquidation realtime — biết khi nào có cascade liquidation lớn.
+#### [PRIORITY 1] Funding Rate Full Chart
+**Mục đích:** Xem lịch sử 100 chu kỳ funding rate dạng bar chart thay vì chỉ sparkline 10 điểm.
 
 **Files cần tạo/sửa:**
-- `src/hooks/useLiquidations.js` — WS `wss://fstream.binance.com/ws/!forceOrder@arr`
-- `ChartPanel.jsx` hoặc overlay markers trên nến
+- `src/hooks/useFundingRateHistory.js` — REST `GET /fapi/v1/fundingRate?limit=100`
+- `ChartPanel.jsx` — thêm panel BarSeries vàng, sync timescale, toggle button `FR`
 
 **Notes:**
-- Mỗi liquidation = 1 marker hình tam giác trên chart tại giá/thời điểm
-- Lọc theo qty threshold để tránh noise (chỉ hiện liq lớn)
-- Chỉ Futures
+- Endpoint: `GET https://fapi.binance.com/fapi/v1/fundingRate?symbol=BTCUSDT&limit=100`
+- Response: `[{ symbol, fundingRate, fundingTime }]`
+- Chỉ Futures — tương tự pattern OI History (setTimeout(0) + sync TimeRange)
+- Màu bar: xanh nếu funding dương (long trả short), đỏ nếu âm (short trả long)
 
 ---
 
-### 🔲 Priority trung bình (v19+)
+### 🔲 Priority trung bình (v21+)
 
 | Tính năng | Mô tả | Độ phức tạp |
 |---|---|---|
-| Funding Rate Full Chart | 100 chu kỳ funding history dạng bar | Thấp |
 | Multi-timeframe 2 chart | 1h trend + 5m entry song song | Cao |
 | Keyboard shortcuts | j/k navigate coin, 1-9 đổi interval | Thấp |
 | Notifications history | Log alerts đã trigger, xem lại được | Trung bình |
@@ -384,6 +362,8 @@ export async function getTakerBuySellVol(symbol, period, limit = 500, endTime = 
 | L/S topLongShort chỉ available cho ~20 coin lớn | Thấp | Handled bằng Promise.allSettled |
 | OI/TVol period không khớp 100% với interval chart | Thấp | INTERVAL_TO_PERIOD map xấp xỉ tốt nhất |
 | TVol sellVol vẽ âm — axis label hiện số âm | Thấp | Có thể dùng 2 priceScale riêng nếu muốn đẹp hơn |
+| CVD reset về 0 mỗi lần load chart mới | Thấp | CVD là relative indicator, acceptable |
+| Liq markers snap về nến gần nhất (không snap chính xác giá) | Thấp | lightweight-charts markers không có price field, chỉ time |
 
 ---
 
@@ -391,17 +371,18 @@ export async function getTakerBuySellVol(symbol, period, limit = 500, endTime = 
 
 **Bắt buộc gửi:**
 ```
-📄 active-context-v17.md     ← file này (bắt buộc, đọc trước tiên)
+📄 active-context-v19.md     ← file này (bắt buộc, đọc trước tiên)
 ```
 
 **Gửi nếu muốn sửa / thêm tính năng liên quan:**
 
 | Muốn làm gì | File cần gửi thêm |
 |---|---|
-| Hoàn thiện TVol (nếu có bug) | `ChartPanel.jsx` + `chartStore.js` + `useTakerVolume.js` |
-| Thêm CVD | `ChartPanel.jsx` + `useKlineData.js` |
-| Thêm Liquidation Tracker | `binanceApi.js` + `App.jsx` |
+| Thêm Funding Rate History Chart (v20) | `ChartPanel.jsx` + `useFundingRate.js` |
+| Sửa Liquidation Tracker | `ChartPanel.jsx` + `useLiquidations.js` |
+| Sửa CVD | `ChartPanel.jsx` + `useKlineData.js` |
 | Sửa OI Chart | `ChartPanel.jsx` + `useOIHistory.js` |
+| Sửa TVol | `ChartPanel.jsx` + `useTakerVolume.js` + `binanceApi.js` |
 | Sửa L/S Ratio panel | `LongShortPanel.jsx` + `useLongShortRatio.js` |
 | Sửa chart / thêm indicator | `ChartPanel.jsx` + `useKlineData.js` |
 | Sửa sidebar / watchlist | `CoinList.jsx` + `watchlistStore.js` |
@@ -413,7 +394,7 @@ export async function getTakerBuySellVol(symbol, period, limit = 500, endTime = 
 
 **Gợi ý câu prompt mở đầu phiên tới:**
 ```
-Đây là active-context-v17.md theo dõi dự án Binance Tracker.
+Đây là active-context-v19.md theo dõi dự án Binance Tracker.
 Đọc kỹ "Bug đã sửa" trước khi viết code.
 Nhiệm vụ hôm nay: [mô tả]
 ```

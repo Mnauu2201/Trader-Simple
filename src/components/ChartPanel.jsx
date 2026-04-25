@@ -6,6 +6,7 @@ import DrawingToolbar from './DrawingToolbar'
 import { useDrawingTools } from '../hooks/useDrawingTools'
 import { useOIHistory } from '../hooks/useOIHistory'
 import { useTakerVolume } from '../hooks/useTakerVolume'
+import { useLiquidations } from '../hooks/useLiquidations'
 
 // ── Interval groups ──────────────────────────────────────────────────────────
 const INTERVAL_GROUPS = [
@@ -479,6 +480,10 @@ export default function ChartPanel() {
   const cvdSeriesRef     = useRef(null)
   const cvdStateRef      = useRef(null)  // { lastCVD } — O(1) per tick
 
+  // ── Liquidation markers ref ────────────────────────────────────────────────
+  // Lưu danh sách markers để setMarkers lên candleSeries
+  const liqMarkersRef    = useRef([])   // [{ time, position, color, shape, text }]
+
   const klineDataRef = useRef([])
   const rsiStateRef = useRef(null)
   const macdStateRef = useRef(null)
@@ -519,6 +524,7 @@ export default function ChartPanel() {
     showOI, setShowOI,
     showTakerVol, setShowTakerVol,
     showCVD, setShowCVD,
+    showLiq, setShowLiq,
   } = useChartStore()
 
   // ── OI History data ───────────────────────────────────────────────────────
@@ -1499,6 +1505,63 @@ export default function ChartPanel() {
 
   useKlineData(candleRef, volumeRef, symbol, interval, market, onKlineData, onKlineUpdate, onKlinePrepend, loadMoreRef)
 
+  // ── Liquidation markers ───────────────────────────────────────────────────
+  // Reset markers khi đổi symbol/interval/market
+  useEffect(() => {
+    liqMarkersRef.current = []
+    if (candleRef.current) {
+      try { candleRef.current.setMarkers([]) } catch (_) {}
+    }
+  }, [symbol, interval, market])
+
+  const handleLiquidation = useCallback(({ price, qty, side, time, usdValue }) => {
+    if (!showLiq) return
+    const candles = candleRef.current
+    if (!candles) return
+
+    // Nến hiện tại gần nhất
+    const data = klineDataRef.current
+    if (!data.length) return
+
+    // Snap time về nến gần nhất
+    const timeSec = Math.floor(time / 1000)
+    let nearestCandle = data[data.length - 1]
+    for (let i = data.length - 1; i >= 0; i--) {
+      if (data[i].time <= timeSec) { nearestCandle = data[i]; break }
+    }
+
+    const isBuyLiq = side === 'BUY'   // BUY liq = ai đó short bị liq (sell pressure)
+    const usdK = usdValue >= 1_000_000
+      ? (usdValue / 1_000_000).toFixed(1) + 'M'
+      : (usdValue / 1_000).toFixed(0) + 'K'
+
+    const marker = {
+      time: nearestCandle.time,
+      position: isBuyLiq ? 'belowBar' : 'aboveBar',
+      color: isBuyLiq ? '#f6465d' : '#0ecb81',
+      shape: isBuyLiq ? 'arrowUp' : 'arrowDown',
+      text: `Liq $${usdK}`,
+      size: usdValue >= 500_000 ? 2 : 1,
+    }
+
+    // Append + sort theo time (lightweight-charts yêu cầu sorted)
+    liqMarkersRef.current = [...liqMarkersRef.current, marker]
+      .sort((a, b) => a.time - b.time)
+      .slice(-200)   // giữ tối đa 200 markers gần nhất
+
+    try { candles.setMarkers(liqMarkersRef.current) } catch (_) {}
+  }, [showLiq])
+
+  useLiquidations(symbol, market, handleLiquidation)
+
+  // Khi tắt showLiq → xoá markers khỏi chart
+  useEffect(() => {
+    if (!showLiq) {
+      liqMarkersRef.current = []
+      try { candleRef.current?.setMarkers([]) } catch (_) {}
+    }
+  }, [showLiq])
+
   const activePanels = (showRSI ? 1 : 0) + (showMACD ? 1 : 0)
   const panelHeightPct = activePanels === 1 ? 22 : 18
 
@@ -1621,6 +1684,15 @@ export default function ChartPanel() {
                 }`}>
               CVD
             </button>
+
+            {market === 'futures' && (
+              <button onClick={() => setShowLiq(!showLiq)}
+                className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showLiq ? 'bg-[#ff6b351a] text-[#ff6b35] border-[#ff6b3544] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+                  }`}
+                title="Hiện liquidation markers trên chart (chỉ Futures)">
+                Liq
+              </button>
+            )}
           </div>
 
           <div className="ml-auto flex items-center gap-2">

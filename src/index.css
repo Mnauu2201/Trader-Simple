@@ -54,3 +54,27 @@ a[href*="tradingview.com"] {
 .scrollbar-thin:not(:hover)::-webkit-scrollbar-thumb {
   background: transparent;
 }
+
+/* ── Mobile utilities ────────────────────────────────────────────────────── */
+
+/* Ẩn scrollbar nhưng vẫn scroll được — dùng cho interval bar ngang trên mobile */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Touch action — ngăn double-tap zoom trên mobile */
+@media (max-width: 767px) {
+  button, a {
+    touch-action: manipulation;
+  }
+
+  /* Tăng hit target tối thiểu trên mobile cho các button nhỏ */
+  .mobile-tap-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

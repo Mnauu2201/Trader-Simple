@@ -124,32 +124,42 @@ binance-tracker/
 │   └── favicon.ico
 │
 ├── src/
+│   ├── assets/
+│   │
 │   ├── components/
-│   │   ├── App.jsx               — Root layout, AlertEngine, right panel toggle
-│   │   ├── CoinList.jsx          — Sidebar: coin list + tab Thị trường/Tăng/Giảm
-│   │   ├── ChartPanel.jsx        — Chart chính: nến + MA/EMA/BB/RSI/MACD/VOL
-│   │   ├── PriceCard.jsx         — Header bar: giá + funding + OI + sparkline
 │   │   ├── AlertPanel.jsx        — Price alert UI + SoundSettings
+│   │   ├── ChartPanel.jsx        — Chart chính: nến + MA/EMA/BB/RSI/MACD/VOL/OI/TVol/CVD
+│   │   ├── CoinList.jsx          — Sidebar: coin list + tab Thị trường/Tăng/Giảm/Watchlist
+│   │   ├── DrawingToolbar.jsx    — Toolbar vẽ tay: TrendLine, HLine, FibRetracement
+│   │   ├── IntervalSelector.jsx  — (deprecated, không dùng nữa)
+│   │   ├── LongShortPanel.jsx    — Long/Short Ratio panel: Global/TopAcct/TopPos + sparkline
 │   │   ├── OrderBookPanel.jsx    — Order book top 5 bid/ask + depth bar + spread
-│   │   ├── RecentTradesPanel.jsx — Recent trades list (30 aggTrades)
-│   │   └── IntervalSelector.jsx  — (deprecated, không dùng nữa)
+│   │   ├── PriceCard.jsx         — Header bar: giá + funding + OI + sparkline
+│   │   └── RecentTradesPanel.jsx — Recent trades list (30 aggTrades)
 │   │
 │   ├── hooks/
-│   │   ├── useBinanceWS.js       — WS ticker stream (batch 40 symbols/connection)
-│   │   ├── useKlineData.js       — WS + REST kline (retry 3 lần + reconnect)
 │   │   ├── useAlertChecker.js    — Background checker alert (soundRef pattern)
+│   │   ├── useBinanceWS.js       — WS ticker stream (batch 40 symbols/connection)
+│   │   ├── useDrawingTools.js    — Drawing tools state + canvas overlay logic
 │   │   ├── useFundingRate.js     — WS markPrice + OI polling (auto-reconnect)
+│   │   ├── useKlineData.js       — WS + REST kline (retry 3 lần + reconnect)
+│   │   ├── useLongShortRatio.js  — REST poll 30s, lịch sử 24 điểm Long/Short
+│   │   ├── useOIHistory.js       — REST fetch OI history, infinite scroll, poll 5m
 │   │   ├── useOrderBook.js       — WS @depth5 + RAF batch + auto-reconnect
-│   │   └── useRecentTrades.js    — WS @aggTrade + buffer 30 + RAF batch
+│   │   ├── useRecentTrades.js    — WS @aggTrade + buffer 30 + RAF batch
+│   │   └── useTakerVolume.js     — REST fetch Taker Buy/Sell Vol, infinite scroll, poll 1m
 │   │
 │   ├── store/
+│   │   ├── alertStore.js         — Alerts list (persist localStorage)
+│   │   ├── chartStore.js         — Symbol, interval, market, indicators, alertSound, showCVD
 │   │   ├── marketStore.js        — Prices (_prices module-level + RAF batch)
-│   │   ├── chartStore.js         — Symbol, interval, market, indicators, alertSound
-│   │   └── alertStore.js         — Alerts list (persist localStorage)
+│   │   └── watchlistStore.js     — Watchlist cá nhân (persist localStorage, max 50 coin)
 │   │
 │   ├── services/
 │   │   └── binanceApi.js         — REST wrapper (Spot + Futures, fallback URLs)
 │   │
+│   ├── App.css
+│   ├── App.jsx                   — Root layout, AlertEngine, right panel toggle
 │   ├── index.css                 — Tailwind directives + custom scrollbar
 │   └── main.jsx                  — Entry point
 │
@@ -280,6 +290,27 @@ Top 5 ask (đỏ) + spread row + top 5 bid (xanh). Depth bar = cumulative qty / 
 
 ### `src/components/AlertPanel.jsx`
 Thêm/xóa price alert. SoundSettings: slider volume (0-100%) + chọn tone (Sine/Square/Sawtooth/Triangle) + nút preview. Persist qua chartStore.
+
+### `src/components/DrawingToolbar.jsx`
+Toolbar vẽ tay trên chart. Các công cụ: TrendLine, HorizontalLine, FibRetracement. Hiển thị dọc bên trái chart, toggle active tool. Dùng kết hợp với `useDrawingTools.js`.
+
+### `src/components/LongShortPanel.jsx`
+Panel Long/Short Ratio với 3 loại: Global Accounts, Top Trader Accounts, Top Trader Positions. Mỗi loại có GaugeBar trực quan, sparkline 24 điểm, và SignalBadge tự động (Đám đông quá Long/Short/Cân bằng). Collapse riêng từng section.
+
+### `src/hooks/useDrawingTools.js`
+Quản lý state drawing tools (active tool, danh sách shapes đã vẽ). Xử lý mouse events trên canvas overlay để vẽ TrendLine, HLine, Fibonacci Retracement.
+
+### `src/hooks/useLongShortRatio.js`
+REST poll 30s, lấy lịch sử 24 điểm Long/Short Ratio từ 3 endpoint Binance Futures. Dùng `Promise.allSettled` để xử lý endpoint `topLongShort` chỉ available cho ~20 coin lớn.
+
+### `src/hooks/useOIHistory.js`
+REST fetch Open Interest history, infinite scroll backward (load thêm dữ liệu cũ khi kéo chart sang trái), poll mỗi 5 phút. Sync TimeRange với main chart.
+
+### `src/hooks/useTakerVolume.js`
+REST fetch Taker Buy/Sell Volume từ endpoint `/futures/data/takerlongshortRatio`, infinite scroll backward, poll mỗi 1 phút. Sell volume vẽ âm (−sellVol) để tách biệt trực quan.
+
+### `src/store/watchlistStore.js`
+Zustand + persist localStorage: danh sách coin đã pin (tối đa 50). Cung cấp `togglePin`, `isPinned`. WS stream riêng cho watchlist ngoài top 180.
 
 ---
 
