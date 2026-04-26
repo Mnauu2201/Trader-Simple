@@ -266,14 +266,12 @@
 
 // binanceApi.js — v23: fix CORS production via Vercel serverless proxy
 
+// binanceApi.js — v23: proxy qua /api/proxy (Vercel serverless)
+
 const isDev = import.meta.env.DEV
 
 const SPOT_BASE    = isDev ? '' : 'https://api.binance.com'
 const FUTURES_BASE = isDev ? '' : 'https://fapi.binance.com'
-
-// DEV: Vite proxy (/futures-data → fapi.binance.com via vite.config.js)
-// PROD: Vercel serverless function (/api/futures-proxy → fapi.binance.com)
-const FUTURES_DATA_BASE = isDev ? '/futures-data' : '/api/futures-proxy'
 
 async function fetchSpot(path) {
   const res = await fetch(SPOT_BASE + path, { signal: AbortSignal.timeout(8000) })
@@ -287,10 +285,19 @@ async function fetchFutures(path) {
   return res.json()
 }
 
+// DEV: Vite proxy /futures-data → fapi.binance.com
+// PROD: /api/proxy?p=<path>&<queryparams>
 async function fetchFuturesData(path) {
-  const url = FUTURES_DATA_BASE + path
+  let url
+  if (isDev) {
+    url = '/futures-data' + path
+  } else {
+    // Split path and query string
+    const [pathname, qs] = path.split('?')
+    url = `/api/proxy?p=${encodeURIComponent(pathname)}${qs ? '&' + qs : ''}`
+  }
   console.log('[Futures Data API] request:', url)
-  const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+  const res = await fetch(url, { signal: AbortSignal.timeout(10000) })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
