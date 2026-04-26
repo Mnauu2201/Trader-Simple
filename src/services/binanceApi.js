@@ -268,7 +268,12 @@
 
 // binanceApi.js — v23: proxy qua /api/proxy (Vercel serverless)
 
+// binanceApi.js — v23: Cloudflare Worker proxy cho /futures/data/*
+
 const isDev = import.meta.env.DEV
+
+// ⚠️ Thay URL này bằng Cloudflare Worker URL của bạn sau khi deploy
+const CF_WORKER_URL = 'https://binance-proxy.anhtrinhciutb8.workers.dev'
 
 const SPOT_BASE    = isDev ? '' : 'https://api.binance.com'
 const FUTURES_BASE = isDev ? '' : 'https://fapi.binance.com'
@@ -285,16 +290,15 @@ async function fetchFutures(path) {
   return res.json()
 }
 
-// DEV: Vite proxy /futures-data → fapi.binance.com
-// PROD: /api/proxy?p=<path>&<queryparams>
 async function fetchFuturesData(path) {
   let url
   if (isDev) {
+    // DEV: Vite proxy
     url = '/futures-data' + path
   } else {
-    // Split path and query string
+    // PROD: Cloudflare Worker
     const [pathname, qs] = path.split('?')
-    url = `/api/proxy?p=${encodeURIComponent(pathname)}${qs ? '&' + qs : ''}`
+    url = `${CF_WORKER_URL}?p=${encodeURIComponent(pathname)}${qs ? '&' + qs : ''}`
   }
   console.log('[Futures Data API] request:', url)
   const res = await fetch(url, { signal: AbortSignal.timeout(10000) })
