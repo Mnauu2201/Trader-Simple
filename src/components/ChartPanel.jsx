@@ -491,6 +491,7 @@ export default function ChartPanel() {
   const frSeriesRef = useRef(null)
 
   const klineDataRef = useRef([])
+  const [klineDataState, setKlineDataState] = useState([])
   const rsiStateRef = useRef(null)
   const macdStateRef = useRef(null)
   const loadMoreRef = useRef(null)   // fn được useKlineData gán — gọi để load nến cũ hơn
@@ -537,7 +538,7 @@ export default function ChartPanel() {
 
   // ── OI History data ───────────────────────────────────────────────────────
   const { oiData, loadMoreOI, hasMoreOI } = useOIHistory(symbol, interval, market)
-  const { tvData, loadMoreTV, hasMoreTV } = useTakerVolume(symbol, interval, market)
+  const { tvData, loadMoreTV, hasMoreTV } = useTakerVolume(symbol, interval, market, klineDataState)
 
   // ── Funding Rate History ──────────────────────────────────────────────────
   const frHistory = useFundingRateHistory(symbol, market)
@@ -1320,6 +1321,7 @@ export default function ChartPanel() {
   // ── onData: full calc sau khi REST load ───────────────────────────────────
   const onKlineData = useCallback((data) => {
     klineDataRef.current = [...data]
+    setKlineDataState([...data])
 
     if (data.length > 0) {
       const samplePrice = data[data.length - 1].close
@@ -1473,6 +1475,7 @@ export default function ChartPanel() {
     // Sắp xếp lại theo time tăng dần (Binance thường đã sorted)
     merged.sort((a, b) => a.time - b.time)
     klineDataRef.current = merged
+    setKlineDataState([...merged])
 
     // setData toàn bộ lên chart (lightweight-charts hỗ trợ prepend qua setData)
     candleRef.current?.setData(merged)
@@ -1843,8 +1846,8 @@ export default function ChartPanel() {
             {/* ── v21: Multi-timeframe toggle ── */}
             <button onClick={() => setShowDualChart(!showDualChart)}
               className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showDualChart
-                  ? 'bg-[#a855f71a] text-[#a855f7] border-[#a855f744] font-medium'
-                  : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+                ? 'bg-[#a855f71a] text-[#a855f7] border-[#a855f744] font-medium'
+                : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
                 }`}
               title="Multi-timeframe: hiển thị 2 chart song song">
               2TF

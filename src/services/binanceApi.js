@@ -3,7 +3,7 @@
 const isDev = import.meta.env.DEV
 const CF_WORKER_URL = 'https://binance-proxy.anhtrinhciutb8.workers.dev'
 
-const SPOT_BASE    = isDev ? '' : 'https://api.binance.com'
+const SPOT_BASE = isDev ? '' : 'https://api.binance.com'
 const FUTURES_BASE = isDev ? '' : 'https://fapi.binance.com'
 
 async function fetchSpot(path) {
@@ -25,7 +25,7 @@ async function fetchFuturesData(path) {
   } else {
     const qIdx = path.indexOf('?')
     const pathname = qIdx >= 0 ? path.slice(0, qIdx) : path
-    const qs      = qIdx >= 0 ? path.slice(qIdx + 1) : ''
+    const qs = qIdx >= 0 ? path.slice(qIdx + 1) : ''
     url = `${CF_WORKER_URL}?p=${encodeURIComponent(pathname)}&${qs}`
   }
   console.log('[Futures Data API]', url)
@@ -46,7 +46,9 @@ export async function getKlines(symbol, interval, limit = 500, market = 'spot', 
     low: parseFloat(c[3]),
     close: parseFloat(c[4]),
     volume: parseFloat(c[5]),
+    quoteVolume: parseFloat(c[7] ?? 0),
     takerBuyVol: parseFloat(c[9] ?? 0),
+    takerBuyQuoteVol: parseFloat(c[10] ?? 0),
   }))
 }
 
