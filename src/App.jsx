@@ -377,10 +377,29 @@ const KEY_INTERVALS = {
 export default function App() {
   const [rightPanel, setRightPanel] = useState(null)
   const [mobileTab, setMobileTab] = useState('chart')
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const activeCount = useAlertStore(s => s.alerts.filter(a => !a.triggered).length)
   const showDualChart = useChartStore(s => s.showDualChart)
   const setInterval = useChartStore(s => s.setInterval)
   const coinListRef = useRef(null)
+
+  // ── Fullscreen sync: lắng nghe browser exit fullscreen (Esc) ────────────
+  useEffect(() => {
+    function onFsChange() {
+      setIsFullscreen(!!document.fullscreenElement)
+    }
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => document.removeEventListener('fullscreenchange', onFsChange)
+  }, [])
+
+  // ── Toggle fullscreen helper ─────────────────────────────────────────────
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {})
+    } else {
+      document.exitFullscreen().catch(() => {})
+    }
+  }, [])
 
   // ── Global keyboard shortcuts ────────────────────────────────────────────
   useEffect(() => {
@@ -397,13 +416,16 @@ export default function App() {
       // 1–9 = đổi interval
       if (KEY_INTERVALS[e.key]) { e.preventDefault(); setInterval(KEY_INTERVALS[e.key]); return }
 
-      // Escape = đóng right panel
+      // f = fullscreen toggle
+      if (e.key === 'f' || e.key === 'F') { e.preventDefault(); toggleFullscreen(); return }
+
+      // Escape = đóng right panel (browser đã handle exit fullscreen riêng)
       if (e.key === 'Escape') { setRightPanel(null); return }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [setInterval])
+  }, [setInterval, toggleFullscreen])
 
   function togglePanel(mode) {
     setRightPanel(prev => prev === mode ? null : mode)
@@ -541,6 +563,27 @@ export default function App() {
                 </button>
               )
             })}
+
+            {/* Fullscreen toggle */}
+            <button
+              onClick={toggleFullscreen}
+              title={isFullscreen ? 'Thoát toàn màn hình (F)' : 'Toàn màn hình (F)'}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-[11px] font-medium transition-all duration-150"
+              style={{ color: '#566475', borderLeft: '2px solid transparent' }}
+              onMouseEnter={e => { e.currentTarget.style.color = '#8b98a5' }}
+              onMouseLeave={e => { e.currentTarget.style.color = '#566475' }}
+            >
+              {isFullscreen ? (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 3v3a2 2 0 01-2 2H3M21 8h-3a2 2 0 01-2-2V3M3 16h3a2 2 0 012 2v3M16 21v-3a2 2 0 012-2h3" />
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 3H5a2 2 0 00-2 2v3M21 8V5a2 2 0 00-2-2h-3M3 16v3a2 2 0 002 2h3M16 21h3a2 2 0 002-2v-3" />
+                </svg>
+              )}
+              <span>{isFullscreen ? 'Thu nhỏ' : 'Toàn màn hình'}</span>
+            </button>
           </div>
         </div>
 

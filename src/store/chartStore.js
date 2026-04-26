@@ -1,4 +1,4 @@
-// src/store/chartStore.js — v21: thêm showDualChart + interval2 (Multi-timeframe)
+// src/store/chartStore.js — v26: thêm showVWAP
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
@@ -26,6 +26,9 @@ export const useChartStore = create(
       showDualChart: false,   // bật/tắt chart thứ 2 song song
       interval2: '1h',        // interval của chart thứ 2 (mặc định 1h trend)
 
+      // ── v26: VWAP ────────────────────────────────────────────────────────
+      showVWAP: false,        // VWAP overlay trên chart chính
+
       // Alert sound settings
       alertVolume: 0.4,          // 0.0 – 1.0
       alertTone: 'sine',       // 'sine' | 'square' | 'sawtooth' | 'triangle'
@@ -46,6 +49,7 @@ export const useChartStore = create(
       setShowFR:  (v) => set({ showFR: v }),    // ← v20
       setShowDualChart: (v) => set({ showDualChart: v }),  // ← v21
       setInterval2: (v) => set({ interval2: v }),          // ← v21
+      setShowVWAP: (v) => set({ showVWAP: v }),             // ← v26
       setAlertVolume: (v) => set({ alertVolume: v }),
       setAlertTone: (v) => set({ alertTone: v }),
     }),
@@ -68,6 +72,7 @@ export const useChartStore = create(
         showFR: state.showFR,     // ← v20
         showDualChart: state.showDualChart,  // ← v21
         interval2: state.interval2,          // ← v21
+        showVWAP: state.showVWAP,            // ← v26
         alertVolume: state.alertVolume,
         alertTone: state.alertTone,
       }),

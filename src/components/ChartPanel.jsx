@@ -256,6 +256,33 @@ function getPriceFormat(price) {
   return { type: 'price', precision: 10, minMove: 0.0000000001 }
 }
 
+// ── VWAP: Volume Weighted Average Price ──────────────────────────────────────
+// Daily VWAP — reset mỗi ngày UTC.
+// typical_price = (high + low + close) / 3
+// VWAP[i] = Σ(tp × vol) / Σvol  (chạy trong cùng 1 ngày UTC)
+function getDayKey(unixSec) {
+  // Trả về 'YYYY-MM-DD' (UTC) — dùng để group nến theo ngày
+  const d = new Date(unixSec * 1000)
+  return `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`
+}
+
+function calcVWAPFull(data) {
+  const result = []
+  let sumPV = 0, sumV = 0, curDay = null
+  for (const d of data) {
+    const day = getDayKey(d.time)
+    if (day !== curDay) {
+      // Ngày mới → reset
+      sumPV = 0; sumV = 0; curDay = day
+    }
+    const tp = (d.high + d.low + d.close) / 3
+    sumPV += tp * (d.volume ?? 0)
+    sumV  += (d.volume ?? 0)
+    if (sumV > 0) result.push({ time: d.time, value: sumPV / sumV })
+  }
+  return result
+}
+
 function throttle(fn, ms) {
   let last = 0, timer = null
   return function (...args) {
@@ -459,6 +486,10 @@ export default function ChartPanel() {
   const bbMiddleRef = useRef(null)
   const bbLowerRef = useRef(null)
 
+  // ── VWAP refs ─────────────────────────────────────────────────────────────
+  const vwapRef = useRef(null)
+  const vwapStateRef = useRef(null)  // { sumPV, sumV, dayKey } — O(1) per tick
+
   // ── OI History refs ───────────────────────────────────────────────────────
   const oiContainerRef = useRef(null)
   const oiChartRef = useRef(null)
@@ -534,6 +565,7 @@ export default function ChartPanel() {
     showLiq, setShowLiq,
     showFR, setShowFR,
     showDualChart, setShowDualChart,
+    showVWAP, setShowVWAP,
   } = useChartStore()
 
   // ── OI History data ───────────────────────────────────────────────────────
@@ -668,6 +700,13 @@ export default function ChartPanel() {
       visible: false,
     })
 
+    // ── VWAP series ──────────────────────────────────────────────────────────
+    const vwapSeries = mainChart.addSeries(LineSeries, {
+      color: '#00bcd4', lineWidth: 1, lineStyle: 0,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      visible: false,
+    })
+
     const rsiChart = createChart(rsiContainerRef.current, {
       autoSize: true,
       layout: { ...baseLayout, fontSize: 10 },
@@ -779,6 +818,7 @@ export default function ChartPanel() {
     bbUpperRef.current = bbUpper
     bbMiddleRef.current = bbMiddle
     bbLowerRef.current = bbLower
+    vwapRef.current = vwapSeries
 
     // ── Wire pixelToPrice từ priceScale của mainChart ──
     // Canvas overlay absolute top:0 left:0 trên container cha.
@@ -840,6 +880,8 @@ export default function ChartPanel() {
       emaStateRef.current = {}
       rsiLineRef.current = macdLineRef.current = macdSignalRef.current = macdHistRef.current = null
       bbUpperRef.current = bbMiddleRef.current = bbLowerRef.current = null
+      vwapRef.current = null
+      vwapStateRef.current = null
       pixelToPriceRef.current = null
       pixelToTimeRef2.current = null
       if (frChartRef.current) { frChartRef.current.remove(); frChartRef.current = null }
@@ -1263,6 +1305,17 @@ export default function ChartPanel() {
     }
   }, [showBB])
 
+  // ── Toggle VWAP ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    vwapRef.current?.applyOptions({ visible: showVWAP })
+    if (showVWAP && klineDataRef.current.length > 0) {
+      const vwapData = calcVWAPFull(klineDataRef.current)
+      vwapRef.current?.setData(vwapData)
+      // Seed vwapStateRef với state của ngày hiện tại
+      _seedVWAPState(klineDataRef.current)
+    }
+  }, [showVWAP])
+
   // ── Override cursor của lightweight-charts và ẩn crosshair khi cần ────────
   // LW inject cursor:crosshair vào canvas nội bộ — dùng style tag để force override
   useEffect(() => {
@@ -1318,6 +1371,22 @@ export default function ChartPanel() {
   // Chỉ auto-scroll khi user đang ở cuối chart (rightOffset < 20 nến)
   const lastCandleTimeRef = useRef(null)
 
+  // ── Seed vwapStateRef từ data (lấy state ngày hôm nay) ───────────────────
+  // Dùng bởi toggle VWAP và onData
+  function _seedVWAPState(data) {
+    if (!data.length) return
+    let sumPV = 0, sumV = 0
+    const lastDay = getDayKey(data[data.length - 1].time)
+    // Scan ngược từ cuối để tìm nến cùng ngày
+    for (let i = data.length - 1; i >= 0; i--) {
+      if (getDayKey(data[i].time) !== lastDay) break
+      const tp = (data[i].high + data[i].low + data[i].close) / 3
+      sumPV += tp * (data[i].volume ?? 0)
+      sumV  += (data[i].volume ?? 0)
+    }
+    vwapStateRef.current = { sumPV, sumV, dayKey: lastDay }
+  }
+
   // ── onData: full calc sau khi REST load ───────────────────────────────────
   const onKlineData = useCallback((data) => {
     klineDataRef.current = [...data]
@@ -1369,6 +1438,13 @@ export default function ChartPanel() {
       const cvdData = calcCVDFull(data)
       cvdSeriesRef.current.setData(cvdData)
       cvdStateRef.current = { lastCVD: cvdData[cvdData.length - 1]?.value ?? 0 }
+    }
+
+    // VWAP — full calc + seed state cho O(1) update
+    if (vwapRef.current) {
+      const vwapData = calcVWAPFull(data)
+      vwapRef.current.setData(vwapData)
+      _seedVWAPState(data)
     }
   }, [])
 
@@ -1447,6 +1523,38 @@ export default function ChartPanel() {
       if (isNew) cvdStateRef.current = { lastCVD: newCVD }
     }
 
+    // VWAP — O(1) per tick
+    if (vwapRef.current && vwapStateRef.current) {
+      const vs = vwapStateRef.current
+      const candleDay = getDayKey(candle.time)
+      let { sumPV, sumV, dayKey } = vs
+      if (candleDay !== dayKey) {
+        // Ngày mới → reset
+        sumPV = 0; sumV = 0; dayKey = candleDay
+      }
+      const tp = (candle.high + candle.low + candle.close) / 3
+      if (isNew) {
+        // Nến mới: cộng dồn volume mới
+        sumPV += tp * (candle.volume ?? 0)
+        sumV  += (candle.volume ?? 0)
+        vwapStateRef.current = { sumPV, sumV, dayKey }
+      } else {
+        // Update nến hiện tại: recalc ngày hôm nay từ klineDataRef O(n_today) — hiếm
+        // Chỉ xảy ra với nến đang live, số nến cùng ngày thường < 1440
+        const data = klineDataRef.current
+        let sp = 0, sv = 0
+        for (let i = data.length - 1; i >= 0; i--) {
+          if (getDayKey(data[i].time) !== candleDay) break
+          const t = (data[i].high + data[i].low + data[i].close) / 3
+          sp += t * (data[i].volume ?? 0)
+          sv += (data[i].volume ?? 0)
+        }
+        sumPV = sp; sumV = sv
+        vwapStateRef.current = { sumPV, sumV, dayKey }
+      }
+      if (sumV > 0) vwapRef.current.update({ time: candle.time, value: sumPV / sumV })
+    }
+
     // Auto scroll to latest khi nến MỚI xuất hiện (không phải cập nhật nến hiện tại)
     if (isNew && mainChartRef.current) {
       try {
@@ -1516,6 +1624,13 @@ export default function ChartPanel() {
       const cvdData = calcCVDFull(merged)
       cvdSeriesRef.current.setData(cvdData)
       cvdStateRef.current = { lastCVD: cvdData[cvdData.length - 1]?.value ?? 0 }
+    }
+
+    // VWAP recalc sau khi prepend
+    if (vwapRef.current) {
+      const vwapData = calcVWAPFull(merged)
+      vwapRef.current.setData(vwapData)
+      _seedVWAPState(merged)
     }
   }, [])
 
@@ -1784,6 +1899,13 @@ export default function ChartPanel() {
               className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showBB ? 'bg-[#26a69a1a] text-[#26a69a] border-[#26a69a44] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
                 }`}>
               BB(20,2)
+            </button>
+
+            <button onClick={() => setShowVWAP(!showVWAP)}
+              className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showVWAP ? 'bg-[#00bcd41a] text-[#00bcd4] border-[#00bcd444] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+                }`}
+              title="VWAP — Volume Weighted Average Price (reset mỗi ngày)">
+              VWAP
             </button>
 
             <button onClick={() => setShowRSI(!showRSI)}
