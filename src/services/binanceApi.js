@@ -23,11 +23,9 @@ async function fetchFuturesData(path) {
   if (isDev) {
     url = '/futures-data' + path
   } else {
-    // path = '/futures/data/takerbuysellevol?symbol=BTCUSDT&period=5m&limit=500'
     const qIdx = path.indexOf('?')
     const pathname = qIdx >= 0 ? path.slice(0, qIdx) : path
     const qs      = qIdx >= 0 ? path.slice(qIdx + 1) : ''
-    // Gửi pathname qua ?p=, query string giữ nguyên không encode lại
     url = `${CF_WORKER_URL}?p=${encodeURIComponent(pathname)}&${qs}`
   }
   console.log('[Futures Data API]', url)
@@ -75,6 +73,7 @@ export async function getOpenInterest(symbol) {
 }
 
 export async function getOpenInterestHist(symbol, period = '5m', limit = 48, endTime = null) {
+  // camelCase: Binance docs dùng openInterestHist
   let path = `/futures/data/openInterestHist?symbol=${symbol}&period=${period}&limit=${limit}`
   if (endTime) path += `&endTime=${endTime}`
   return fetchFuturesData(path)
@@ -99,7 +98,8 @@ export async function getTopLongShortPositionRatio(symbol, period = '5m', limit 
 }
 
 export async function getTakerBuySellVol(symbol, period, limit = 500, endTime = null) {
-  let path = `/futures/data/takerbuysellevol?symbol=${symbol}&period=${period}&limit=${limit}`
+  // ⚠️ Binance endpoint chính xác: takerBuySellVol (camelCase)
+  let path = `/futures/data/takerBuySellVol?symbol=${symbol}&period=${period}&limit=${limit}`
   if (endTime) path += `&endTime=${endTime}`
   return fetchFuturesData(path)
 }
