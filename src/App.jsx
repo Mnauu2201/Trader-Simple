@@ -1,6 +1,6 @@
-// src/App.jsx — UI redesign + Mobile responsive
+// src/App.jsx — v27: Share URL / Deep Link
 
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import CoinList from './components/CoinList'
 import ChartPanel from './components/ChartPanel'
 import SecondaryChartPanel from './components/SecondaryChartPanel'
@@ -373,6 +373,81 @@ const KEY_INTERVALS = {
   '5': '1h', '6': '4h', '7': '1d', '8': '1w', '9': '1M',
 }
 
+// ── useShareURL ──────────────────────────────────────────────────────────────
+// Đọc ?symbol=&interval=&market= lúc load, sau đó sync URL khi state thay đổi
+function useShareURL() {
+  const { symbol, interval, market, setSymbol, setInterval, setMarket } = useChartStore()
+
+  // 1) Chỉ chạy 1 lần khi mount: parse URL params và apply vào store
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const s = params.get('symbol')?.toUpperCase()
+    const i = params.get('interval')
+    const m = params.get('market')
+
+    const VALID_INTERVALS = ['1m','3m','5m','15m','30m','1h','2h','4h','6h','8h','12h','1d','3d','1w','1M']
+    const VALID_MARKETS   = ['futures', 'spot']
+
+    if (s && s.endsWith('USDT')) setSymbol(s)
+    if (i && VALID_INTERVALS.includes(i)) setInterval(i)
+    if (m && VALID_MARKETS.includes(m)) setMarket(m)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 2) Mỗi khi symbol/interval/market thay đổi → replaceState (không reload trang)
+  useEffect(() => {
+    const params = new URLSearchParams({ symbol, interval, market })
+    const newUrl = `${window.location.pathname}?${params.toString()}`
+    window.history.replaceState(null, '', newUrl)
+  }, [symbol, interval, market])
+}
+
+// ── CopyLinkButton ────────────────────────────────────────────────────────────
+function CopyLinkButton() {
+  const [copied, setCopied] = useState(false)
+
+  function handleCopy() {
+    navigator.clipboard.writeText(window.location.href).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }).catch(() => {
+      // fallback cho môi trường không hỗ trợ clipboard
+      const ta = document.createElement('textarea')
+      ta.value = window.location.href
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  return (
+    <button
+      onClick={handleCopy}
+      title="Copy link chart hiện tại"
+      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-[11px] font-medium transition-all duration-150"
+      style={{ color: copied ? '#0ecb81' : '#566475', borderLeft: '2px solid transparent' }}
+      onMouseEnter={e => { if (!copied) e.currentTarget.style.color = '#8b98a5' }}
+      onMouseLeave={e => { if (!copied) e.currentTarget.style.color = '#566475' }}
+    >
+      {copied ? (
+        // ✓ checkmark
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      ) : (
+        // link icon
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
+          <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+        </svg>
+      )}
+      <span>{copied ? 'Đã copy!' : 'Copy Link'}</span>
+    </button>
+  )
+}
+
 // ── Main App ────────────────────────────────────────────────────────────────
 export default function App() {
   const [rightPanel, setRightPanel] = useState(null)
@@ -382,6 +457,9 @@ export default function App() {
   const showDualChart = useChartStore(s => s.showDualChart)
   const setInterval = useChartStore(s => s.setInterval)
   const coinListRef = useRef(null)
+
+  // ── Share URL / Deep Link ─────────────────────────────────────────────────
+  useShareURL()
 
   // ── Fullscreen sync: lắng nghe browser exit fullscreen (Esc) ────────────
   useEffect(() => {
@@ -563,6 +641,9 @@ export default function App() {
                 </button>
               )
             })}
+
+            {/* Copy Link — Share URL */}
+            <CopyLinkButton />
 
             {/* Fullscreen toggle */}
             <button
