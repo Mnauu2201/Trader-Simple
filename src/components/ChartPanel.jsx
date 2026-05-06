@@ -1,3 +1,4 @@
+// ChartPanel.jsx — v29: Stochastic RSI panel
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries, AreaSeries } from 'lightweight-charts'
 import { useChartStore } from '../store/chartStore'
@@ -283,6 +284,155 @@ function calcVWAPFull(data) {
   return result
 }
 
+// ── StochRSI(3,3,14,14) ──────────────────────────────────────────────────────
+// Standard TradingView formula:
+//   rawRSI[i]     = RSI(14) trên close prices
+//   rawStoch[i]   = (rawRSI[i] - min(rawRSI, 14)) / (max(rawRSI, 14) - min(rawRSI, 14))
+//   %K[i]         = SMA(rawStoch, 3)   ← "K smoothing"
+//   %D[i]         = SMA(%K, 3)          ← "D smoothing" (signal)
+const STOCH_RSI_PERIOD = 14   // RSI period
+const STOCH_PERIOD     = 14   // Stoch lookback period
+const STOCH_K_SMOOTH   = 3    // K smoothing
+const STOCH_D_SMOOTH   = 3    // D smoothing (signal)
+
+function calcStochRSIFull(data) {
+  // Step 1: calc full RSI array (giá trị từ index 14 trở đi)
+  if (data.length < STOCH_RSI_PERIOD + STOCH_PERIOD + STOCH_K_SMOOTH + STOCH_D_SMOOTH) {
+    return { kLine: [], dLine: [], state: null }
+  }
+
+  const closes = data.map(d => d.close)
+  // RSI full array — mỗi phần tử tương ứng với một candle từ index RSI_PERIOD
+  const rsiArr = []
+  {
+    let g = 0, l = 0
+    for (let i = 1; i <= STOCH_RSI_PERIOD; i++) {
+      const d = closes[i] - closes[i - 1]
+      if (d > 0) g += d; else l -= d
+    }
+    g /= STOCH_RSI_PERIOD; l /= STOCH_RSI_PERIOD
+    rsiArr.push({ idx: STOCH_RSI_PERIOD, val: l === 0 ? 100 : 100 - 100 / (1 + g / l) })
+    for (let i = STOCH_RSI_PERIOD + 1; i < closes.length; i++) {
+      const d = closes[i] - closes[i - 1]
+      g = (g * (STOCH_RSI_PERIOD - 1) + Math.max(d, 0)) / STOCH_RSI_PERIOD
+      l = (l * (STOCH_RSI_PERIOD - 1) + Math.max(-d, 0)) / STOCH_RSI_PERIOD
+      rsiArr.push({ idx: i, val: l === 0 ? 100 : 100 - 100 / (1 + g / l) })
+    }
+  }
+
+  // Step 2: calc raw Stoch of RSI (cần STOCH_PERIOD RSI values)
+  const rawStoch = []
+  for (let i = STOCH_PERIOD - 1; i < rsiArr.length; i++) {
+    const window = rsiArr.slice(i - STOCH_PERIOD + 1, i + 1).map(r => r.val)
+    const minR = Math.min(...window)
+    const maxR = Math.max(...window)
+    const range = maxR - minR
+    rawStoch.push({
+      idx: rsiArr[i].idx,
+      val: range === 0 ? 0 : (rsiArr[i].val - minR) / range,
+    })
+  }
+
+  // Step 3: SMA(K_SMOOTH) của rawStoch → %K
+  const kArr = []
+  for (let i = STOCH_K_SMOOTH - 1; i < rawStoch.length; i++) {
+    const sum = rawStoch.slice(i - STOCH_K_SMOOTH + 1, i + 1).reduce((s, r) => s + r.val, 0)
+    kArr.push({ idx: rawStoch[i].idx, val: (sum / STOCH_K_SMOOTH) * 100 })
+  }
+
+  // Step 4: SMA(D_SMOOTH) của kArr → %D
+  const kLine = [], dLine = []
+  for (let i = STOCH_D_SMOOTH - 1; i < kArr.length; i++) {
+    const sum = kArr.slice(i - STOCH_D_SMOOTH + 1, i + 1).reduce((s, r) => s + r.val, 0)
+    const dataIdx = kArr[i].idx
+    const t = data[dataIdx].time
+    kLine.push({ time: t, value: kArr[i].val })
+    dLine.push({ time: t, value: sum / STOCH_D_SMOOTH })
+  }
+
+  // State để O(1) update per tick — lưu trailing windows
+  const state = {
+    // RSI state
+    rsiAvgGain: (() => {
+      const last = rsiArr[rsiArr.length - 1]
+      // recalc avgGain/Loss từ vị trí cuối
+      let g = 0, l = 0
+      for (let i = 1; i <= STOCH_RSI_PERIOD; i++) {
+        const d = closes[closes.length - STOCH_RSI_PERIOD + i - 1] - closes[closes.length - STOCH_RSI_PERIOD + i - 2]
+        if (d > 0) g += d; else l -= d
+      }
+      g /= STOCH_RSI_PERIOD; l /= STOCH_RSI_PERIOD
+      // Wilder forward
+      for (let i = closes.length - STOCH_RSI_PERIOD; i < closes.length; i++) {
+        if (i === 0) continue
+        const d = closes[i] - closes[i - 1]
+        g = (g * (STOCH_RSI_PERIOD - 1) + Math.max(d, 0)) / STOCH_RSI_PERIOD
+        l = (l * (STOCH_RSI_PERIOD - 1) + Math.max(-d, 0)) / STOCH_RSI_PERIOD
+      }
+      return g
+    })(),
+    rsiAvgLoss: (() => {
+      let g = 0, l = 0
+      for (let i = 1; i <= STOCH_RSI_PERIOD; i++) {
+        const d = closes[closes.length - STOCH_RSI_PERIOD + i - 1] - closes[closes.length - STOCH_RSI_PERIOD + i - 2]
+        if (d > 0) g += d; else l -= d
+      }
+      g /= STOCH_RSI_PERIOD; l /= STOCH_RSI_PERIOD
+      for (let i = closes.length - STOCH_RSI_PERIOD; i < closes.length; i++) {
+        if (i === 0) continue
+        const d = closes[i] - closes[i - 1]
+        g = (g * (STOCH_RSI_PERIOD - 1) + Math.max(d, 0)) / STOCH_RSI_PERIOD
+        l = (l * (STOCH_RSI_PERIOD - 1) + Math.max(-d, 0)) / STOCH_RSI_PERIOD
+      }
+      return l
+    })(),
+    // Trailing RSI window (cần STOCH_PERIOD values để calc min/max)
+    rsiWindow: rsiArr.slice(-STOCH_PERIOD).map(r => r.val),
+    // Trailing raw stoch window (cần K_SMOOTH values)
+    rawStochWindow: rawStoch.slice(-STOCH_K_SMOOTH).map(r => r.val),
+    // Trailing K window (cần D_SMOOTH values)
+    kWindow: kArr.slice(-STOCH_D_SMOOTH).map(r => r.val),
+    lastK: kLine.length ? kLine[kLine.length - 1].value : 50,
+    lastD: dLine.length ? dLine[dLine.length - 1].value : 50,
+  }
+
+  return { kLine, dLine, state }
+}
+
+function updateStochRSIIncr(candle, prevClose, state, isNew) {
+  // Step 1: RSI Wilder update
+  const diff = candle.close - prevClose
+  let { rsiAvgGain: g, rsiAvgLoss: l } = state
+  const newG = (g * (STOCH_RSI_PERIOD - 1) + Math.max(diff, 0)) / STOCH_RSI_PERIOD
+  const newL = (l * (STOCH_RSI_PERIOD - 1) + Math.max(-diff, 0)) / STOCH_RSI_PERIOD
+  const newRSI = newL === 0 ? 100 : 100 - 100 / (1 + newG / newL)
+
+  // Step 2: update rsiWindow
+  const rsiWin = isNew ? [...state.rsiWindow.slice(1), newRSI] : [...state.rsiWindow.slice(0, -1), newRSI]
+  const minR = Math.min(...rsiWin)
+  const maxR = Math.max(...rsiWin)
+  const range = maxR - minR
+  const newRawStoch = range === 0 ? 0 : (newRSI - minR) / range
+
+  // Step 3: update rawStochWindow → calc new K
+  const rawWin = isNew ? [...state.rawStochWindow.slice(1), newRawStoch] : [...state.rawStochWindow.slice(0, -1), newRawStoch]
+  const newK = rawWin.reduce((s, v) => s + v, 0) / STOCH_K_SMOOTH * 100
+
+  // Step 4: update kWindow → calc new D
+  const kWin = isNew ? [...state.kWindow.slice(1), newK / 100] : [...state.kWindow.slice(0, -1), newK / 100]
+  const newD = kWin.reduce((s, v) => s + v, 0) / STOCH_D_SMOOTH * 100
+
+  const newState = isNew ? {
+    rsiAvgGain: newG, rsiAvgLoss: newL,
+    rsiWindow: rsiWin,
+    rawStochWindow: rawWin,
+    kWindow: kWin,
+    lastK: newK, lastD: newD,
+  } : { ...state, lastK: newK, lastD: newD }
+
+  return { newK, newD, newState }
+}
+
 function throttle(fn, ms) {
   let last = 0, timer = null
   return function (...args) {
@@ -521,6 +671,13 @@ export default function ChartPanel() {
   const frChartRef = useRef(null)
   const frSeriesRef = useRef(null)
 
+  // ── StochRSI refs ─────────────────────────────────────────────────────────
+  const stochContainerRef = useRef(null)
+  const stochChartRef = useRef(null)
+  const stochKRef = useRef(null)     // %K line (xanh lá)
+  const stochDRef = useRef(null)     // %D line (cam, signal)
+  const stochStateRef = useRef(null) // O(1) per-tick state
+
   const klineDataRef = useRef([])
   const [klineDataState, setKlineDataState] = useState([])
   const rsiStateRef = useRef(null)
@@ -532,6 +689,7 @@ export default function ChartPanel() {
   const [showGoTo, setShowGoTo] = useState(false)
   const [tooltip, setTooltip] = useState(null)
   const [macdTooltip, setMacdTooltip] = useState(null)
+  const [stochTooltip, setStochTooltip] = useState(null)
   const [isDragging, setIsDragging] = useState(false)
   const [isLoadingOlder, setIsLoadingOlder] = useState(false)  // hiện spinner khi load nến cũ
 
@@ -566,6 +724,7 @@ export default function ChartPanel() {
     showFR, setShowFR,
     showDualChart, setShowDualChart,
     showVWAP, setShowVWAP,
+    showStochRSI, setShowStochRSI,
   } = useChartStore()
 
   // ── OI History data ───────────────────────────────────────────────────────
@@ -756,6 +915,9 @@ export default function ChartPanel() {
       syncRaf = requestAnimationFrame(() => {
         rsiChart.timeScale().setVisibleLogicalRange(range)
         macdChart.timeScale().setVisibleLogicalRange(range)
+        if (stochChartRef.current) {
+          try { stochChartRef.current.timeScale().setVisibleLogicalRange(range) } catch (_) {}
+        }
         syncRaf = null
       })
 
@@ -803,6 +965,7 @@ export default function ChartPanel() {
 
     mainChart.subscribeCrosshairMove(onMain)
     macdChart.subscribeCrosshairMove(onMacd)
+    // StochRSI crosshair — wired after chart init in showStochRSI useEffect
 
     mainChartRef.current = mainChart
     rsiChartRef.current = rsiChart
@@ -886,6 +1049,9 @@ export default function ChartPanel() {
       pixelToTimeRef2.current = null
       if (frChartRef.current) { frChartRef.current.remove(); frChartRef.current = null }
       frSeriesRef.current = null
+      if (stochChartRef.current) { stochChartRef.current.remove(); stochChartRef.current = null }
+      stochKRef.current = stochDRef.current = null
+      stochStateRef.current = null
     }
   }, [])
 
@@ -1446,6 +1612,16 @@ export default function ChartPanel() {
       vwapRef.current.setData(vwapData)
       _seedVWAPState(data)
     }
+
+    // StochRSI — full calc
+    if (stochKRef.current && stochDRef.current) {
+      const { kLine, dLine, state } = calcStochRSIFull(data)
+      if (kLine.length > 0) {
+        stochKRef.current.setData(kLine)
+        stochDRef.current.setData(dLine)
+        stochStateRef.current = state
+      }
+    }
   }, [])
 
   // ── onUpdate: O(1) per tick ───────────────────────────────────────────────
@@ -1555,6 +1731,18 @@ export default function ChartPanel() {
       if (sumV > 0) vwapRef.current.update({ time: candle.time, value: sumPV / sumV })
     }
 
+    // StochRSI — O(1) per tick
+    if (stochKRef.current && stochDRef.current && stochStateRef.current) {
+      const data = klineDataRef.current
+      if (data.length >= 2) {
+        const prevClose = data[data.length - (isNew ? 2 : 2)].close
+        const { newK, newD, newState } = updateStochRSIIncr(candle, prevClose, stochStateRef.current, isNew)
+        stochKRef.current.update({ time: candle.time, value: newK })
+        stochDRef.current.update({ time: candle.time, value: newD })
+        if (isNew) stochStateRef.current = newState
+      }
+    }
+
     // Auto scroll to latest khi nến MỚI xuất hiện (không phải cập nhật nến hiện tại)
     if (isNew && mainChartRef.current) {
       try {
@@ -1631,6 +1819,16 @@ export default function ChartPanel() {
       const vwapData = calcVWAPFull(merged)
       vwapRef.current.setData(vwapData)
       _seedVWAPState(merged)
+    }
+
+    // StochRSI recalc sau khi prepend
+    if (stochKRef.current && stochDRef.current) {
+      const { kLine, dLine, state } = calcStochRSIFull(merged)
+      if (kLine.length > 0) {
+        stochKRef.current.setData(kLine)
+        stochDRef.current.setData(dLine)
+        stochStateRef.current = state
+      }
     }
   }, [])
 
@@ -1760,6 +1958,129 @@ export default function ChartPanel() {
     }
   }, [frHistory])
 
+  // ── StochRSI Chart — init/destroy khi showStochRSI thay đổi ──────────────
+  useEffect(() => {
+    if (!showStochRSI) {
+      if (stochChartRef.current) {
+        stochChartRef.current.remove()
+        stochChartRef.current = null
+        stochKRef.current = null
+        stochDRef.current = null
+      }
+      return
+    }
+
+    let cancelled = false
+    const timerId = setTimeout(() => {
+      if (cancelled || !stochContainerRef.current || stochChartRef.current) return
+
+      const chart = createChart(stochContainerRef.current, {
+        autoSize: true,
+        layout: {
+          background: { color: '#0b0e11' },
+          textColor: '#848e9c',
+          fontFamily: 'Inter, system-ui, sans-serif',
+          attributionLogo: false,
+          fontSize: 10,
+        },
+        grid: {
+          vertLines: { color: '#1a1d26', style: 1 },
+          horzLines: { color: '#1a1d26', style: 1 },
+        },
+        crosshair: {
+          mode: 1,
+          vertLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139' },
+          horzLine: { color: '#4c525e', width: 1, style: 2, labelBackgroundColor: '#2b3139', labelVisible: true },
+        },
+        rightPriceScale: {
+          borderColor: '#1a1d26',
+          textColor: '#848e9c',
+          scaleMargins: { top: 0.1, bottom: 0.1 },
+          minimum: 0,
+          maximum: 100,
+        },
+        timeScale: { visible: false },
+        handleScroll: false,
+        handleScale: false,
+      })
+
+      // %K — xanh lá
+      const kSeries = chart.addSeries(LineSeries, {
+        color: '#0ecb81',
+        lineWidth: 1.5,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        crosshairMarkerVisible: true,
+        autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
+      })
+      // %D — cam (signal)
+      const dSeries = chart.addSeries(LineSeries, {
+        color: '#ff9800',
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        crosshairMarkerVisible: true,
+        autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
+      })
+
+      // OB / OS lines
+      kSeries.createPriceLine({ price: 80, color: '#f6465d88', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'OB' })
+      kSeries.createPriceLine({ price: 20, color: '#0ecb8188', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'OS' })
+
+      stochChartRef.current = chart
+      stochKRef.current = kSeries
+      stochDRef.current = dSeries
+
+      // Crosshair tooltip
+      chart.subscribeCrosshairMove(param => {
+        if (!param.time || !param.point) { setStochTooltip(null); return }
+        const k = param.seriesData?.get(kSeries)
+        const d = param.seriesData?.get(dSeries)
+        if (k == null) { setStochTooltip(null); return }
+        setStochTooltip({ k: k.value, d: d?.value })
+      })
+
+      // Set data ngay nếu đã có klineData
+      const data = klineDataRef.current
+      if (data.length > 0) {
+        const { kLine, dLine, state } = calcStochRSIFull(data)
+        if (kLine.length > 0) {
+          kSeries.setData(kLine)
+          dSeries.setData(dLine)
+          stochStateRef.current = state
+          try {
+            const mainRange = mainChartRef.current?.timeScale().getVisibleLogicalRange()
+            if (mainRange) chart.timeScale().setVisibleLogicalRange(mainRange)
+          } catch (_) {}
+        }
+      }
+
+      // Sync logical range với main chart
+      if (mainChartRef.current) {
+        let stochSyncRaf = null
+        mainChartRef.current.timeScale().subscribeVisibleLogicalRangeChange(range => {
+          if (!range || !stochChartRef.current) return
+          if (stochSyncRaf) cancelAnimationFrame(stochSyncRaf)
+          stochSyncRaf = requestAnimationFrame(() => {
+            try { stochChartRef.current?.timeScale().setVisibleLogicalRange(range) } catch (_) {}
+            stochSyncRaf = null
+          })
+        })
+      }
+    }, 0)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timerId)
+      if (stochChartRef.current) {
+        stochChartRef.current.remove()
+        stochChartRef.current = null
+        stochKRef.current = null
+        stochDRef.current = null
+      }
+    }
+  }, [showStochRSI])
+
   // ── Liquidation markers ───────────────────────────────────────────────────
   // Reset markers khi đổi symbol/interval/market
   useEffect(() => {
@@ -1817,8 +2138,8 @@ export default function ChartPanel() {
     }
   }, [showLiq])
 
-  const activePanels = (showRSI ? 1 : 0) + (showMACD ? 1 : 0)
-  const panelHeightPct = activePanels === 1 ? 22 : 18
+  const activePanels = (showRSI ? 1 : 0) + (showMACD ? 1 : 0) + (showStochRSI ? 1 : 0)
+  const panelHeightPct = activePanels === 1 ? 22 : activePanels === 2 ? 18 : 15
 
   // ─────────────────────────────────────────────────────────────────────────
   // JSX: thêm DrawingToolbar bên trái + canvas overlay trên chart chính
@@ -1918,6 +2239,15 @@ export default function ChartPanel() {
               className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showMACD ? 'bg-[#2196f31a] text-[#64b5f6] border-[#2196f344] font-medium' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
                 }`}>
               MACD
+            </button>
+
+            <button onClick={() => setShowStochRSI(!showStochRSI)}
+              className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showStochRSI
+                ? 'bg-[#0ecb811a] text-[#0ecb81] border-[#0ecb8144] font-medium'
+                : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+                }`}
+              title={`Stochastic RSI(${STOCH_RSI_PERIOD},${STOCH_PERIOD},${STOCH_K_SMOOTH},${STOCH_D_SMOOTH}) — OB/OS: 80/20`}>
+              StochRSI
             </button>
 
             <button onClick={() => setShowVolume(!showVolume)}
@@ -2309,6 +2639,42 @@ export default function ChartPanel() {
             </div>
             <div
               ref={cvdContainerRef}
+              className="w-full"
+              style={{ height: 'calc(100% - 20px)', cursor: isDragging ? 'grabbing' : 'crosshair' }}
+              onMouseDown={() => setIsDragging(true)}
+              onMouseUp={() => setIsDragging(false)}
+              onMouseLeave={() => setIsDragging(false)}
+            />
+          </div>
+        )}
+
+        {/* ── StochRSI panel ── */}
+        {showStochRSI && (
+          <div className="flex-shrink-0 border-t border-[#1a1d26] overflow-hidden transition-all duration-200"
+            style={{ height: `${panelHeightPct}%`, minHeight: 70 }}>
+            <div className="flex items-center gap-2 px-3 py-0.5 bg-[#0b0e11]">
+              <span className="text-[9px] font-medium" style={{ color: '#0ecb81' }}>
+                StochRSI({STOCH_RSI_PERIOD},{STOCH_PERIOD},{STOCH_K_SMOOTH},{STOCH_D_SMOOTH})
+              </span>
+              <span className="text-[9px] text-[#0ecb81]">— %K</span>
+              <span className="text-[9px] text-[#ff9800]">— %D</span>
+              <span className="text-[9px] text-[#f6465d66]">— OB 80</span>
+              <span className="text-[9px] text-[#0ecb8166]">— OS 20</span>
+              {stochTooltip && (
+                <span className="ml-1 flex items-center gap-2">
+                  <span className="text-[9px] text-[#0ecb81]">
+                    K <span className="text-[#eaecef]">{stochTooltip.k?.toFixed(2)}</span>
+                  </span>
+                  {stochTooltip.d != null && (
+                    <span className="text-[9px] text-[#ff9800]">
+                      D <span className="text-[#eaecef]">{stochTooltip.d?.toFixed(2)}</span>
+                    </span>
+                  )}
+                </span>
+              )}
+            </div>
+            <div
+              ref={stochContainerRef}
               className="w-full"
               style={{ height: 'calc(100% - 20px)', cursor: isDragging ? 'grabbing' : 'crosshair' }}
               onMouseDown={() => setIsDragging(true)}

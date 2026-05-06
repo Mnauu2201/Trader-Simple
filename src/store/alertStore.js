@@ -1,5 +1,4 @@
-// src/store/alertStore.js
-// Thêm persist middleware (v7) — alerts được lưu localStorage khi thay đổi
+// src/store/alertStore.js — v30: thêm alert theo % change
 // Key: 'binance-tracker-alerts'
 
 import { create } from 'zustand'
@@ -23,12 +22,19 @@ export const useAlertStore = create(
 
       clearNotifHistory: () => set({ notifHistory: [] }),
 
-      addAlert: (symbol, targetPrice, direction) => {
+      // type: 'price' | 'percent'
+      // percentDir: 'above' (change24h >= X%) | 'below' (change24h <= -X%) | 'either' (|change24h| >= X%)
+      addAlert: (symbol, targetPrice, direction, opts = {}) => {
         const alert = {
           id: nextId++,
           symbol,
+          // ── price alert fields ──
           targetPrice: parseFloat(targetPrice),
           direction,
+          // ── percent alert fields (v30) ──
+          type: opts.type ?? 'price',          // 'price' | 'percent'
+          percentValue: opts.percentValue ?? 0, // e.g. 5 = 5%
+          percentDir: opts.percentDir ?? 'either', // 'above' | 'below' | 'either'
           triggered: false,
           createdAt: Date.now(),
         }

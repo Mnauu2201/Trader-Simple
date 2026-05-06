@@ -1,4 +1,4 @@
-// src/store/chartStore.js — v26: thêm showVWAP
+// src/store/chartStore.js — v29: thêm showStochRSI
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
@@ -11,7 +11,7 @@ export const useChartStore = create(
       market: 'futures',
 
       showMA: { 20: true, 50: true, 200: false },
-      showEMA: { 9: false, 21: false },   // EMA overlay — mặc định tắt
+      showEMA: { 9: false, 21: false },
       showRSI: true,
       showVolume: true,
       showMACD: false,
@@ -19,19 +19,22 @@ export const useChartStore = create(
       showOI: false,
       showTakerVol: false,
       showCVD: false,
-      showLiq: false,   // Liquidation markers trên chart (Futures only)
-      showFR: false,    // Funding Rate History chart (Futures only)
+      showLiq: false,
+      showFR: false,
 
       // ── v21: Multi-timeframe ─────────────────────────────────────────────
-      showDualChart: false,   // bật/tắt chart thứ 2 song song
-      interval2: '1h',        // interval của chart thứ 2 (mặc định 1h trend)
+      showDualChart: false,
+      interval2: '1h',
 
       // ── v26: VWAP ────────────────────────────────────────────────────────
-      showVWAP: false,        // VWAP overlay trên chart chính
+      showVWAP: false,
+
+      // ── v29: Stochastic RSI ──────────────────────────────────────────────
+      showStochRSI: false,    // StochRSI(14,14,3,3) panel bên dưới chart
 
       // Alert sound settings
-      alertVolume: 0.4,          // 0.0 – 1.0
-      alertTone: 'sine',       // 'sine' | 'square' | 'sawtooth' | 'triangle'
+      alertVolume: 0.4,
+      alertTone: 'sine',
 
       setSymbol: (symbol) => set({ symbol }),
       setInterval: (interval) => set({ interval }),
@@ -45,11 +48,12 @@ export const useChartStore = create(
       setShowOI:  (v) => set({ showOI: v }),
       setShowTakerVol: (v) => set({ showTakerVol: v }),
       setShowCVD: (v) => set({ showCVD: v }),
-      setShowLiq: (v) => set({ showLiq: v }),   // ← v19
-      setShowFR:  (v) => set({ showFR: v }),    // ← v20
-      setShowDualChart: (v) => set({ showDualChart: v }),  // ← v21
-      setInterval2: (v) => set({ interval2: v }),          // ← v21
-      setShowVWAP: (v) => set({ showVWAP: v }),             // ← v26
+      setShowLiq: (v) => set({ showLiq: v }),
+      setShowFR:  (v) => set({ showFR: v }),
+      setShowDualChart: (v) => set({ showDualChart: v }),
+      setInterval2: (v) => set({ interval2: v }),
+      setShowVWAP: (v) => set({ showVWAP: v }),
+      setShowStochRSI: (v) => set({ showStochRSI: v }),   // ← v29
       setAlertVolume: (v) => set({ alertVolume: v }),
       setAlertTone: (v) => set({ alertTone: v }),
     }),
@@ -68,11 +72,12 @@ export const useChartStore = create(
         showOI: state.showOI,
         showTakerVol: state.showTakerVol,
         showCVD: state.showCVD,
-        showLiq: state.showLiq,   // ← v19
-        showFR: state.showFR,     // ← v20
-        showDualChart: state.showDualChart,  // ← v21
-        interval2: state.interval2,          // ← v21
-        showVWAP: state.showVWAP,            // ← v26
+        showLiq: state.showLiq,
+        showFR: state.showFR,
+        showDualChart: state.showDualChart,
+        interval2: state.interval2,
+        showVWAP: state.showVWAP,
+        showStochRSI: state.showStochRSI,   // ← v29
         alertVolume: state.alertVolume,
         alertTone: state.alertTone,
       }),

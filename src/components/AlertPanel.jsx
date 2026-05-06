@@ -1,5 +1,4 @@
-// src/components/AlertPanel.jsx
-// v12: thêm SoundSettings — slider volume + chọn tone
+// src/components/AlertPanel.jsx — v30: thêm alert theo % change
 
 import { useState, useCallback } from 'react'
 import { useAlertStore } from '../store/alertStore'
@@ -143,74 +142,166 @@ function AddAlertForm({ onAdded }) {
   const notifGranted = useAlertStore(s => s.notifGranted)
 
   const currentPrice = prices[symbol]?.price ?? 0
-  const [targetInput, setTargetInput] = useState('')
-  const [direction, setDirection] = useState('above')
-  const [error, setError] = useState('')
-
+  const currentChange = prices[symbol]?.change24h ?? 0
   const baseName = symbol.replace('USDT', '')
 
+  // ── Loại alert ────────────────────────────────────────────────────────────
+  const [alertType, setAlertType] = useState('price')  // 'price' | 'percent'
+
+  // ── Price alert state ─────────────────────────────────────────────────────
+  const [targetInput, setTargetInput] = useState('')
+  const [direction, setDirection] = useState('above')
+
+  // ── Percent alert state ───────────────────────────────────────────────────
+  const [percentInput, setPercentInput] = useState('')
+  const [percentDir, setPercentDir] = useState('either') // 'above'|'below'|'either'
+
+  const [error, setError] = useState('')
+
   function handleAdd() {
-    const val = parseFloat(targetInput)
-    if (!val || val <= 0) {
-      setError('Nhập giá hợp lệ')
-      return
-    }
-    if (direction === 'above' && val <= currentPrice) {
-      setError(`Giá "vượt qua" phải > ${fmtPrice(currentPrice)}`)
-      return
-    }
-    if (direction === 'below' && val >= currentPrice) {
-      setError(`Giá "giảm xuống" phải < ${fmtPrice(currentPrice)}`)
-      return
-    }
-    addAlert(symbol, val, direction)
-    setTargetInput('')
     setError('')
+    if (alertType === 'price') {
+      const val = parseFloat(targetInput)
+      if (!val || val <= 0) { setError('Nhập giá hợp lệ'); return }
+      if (direction === 'above' && val <= currentPrice) {
+        setError(`Giá "vượt qua" phải > ${fmtPrice(currentPrice)}`); return
+      }
+      if (direction === 'below' && val >= currentPrice) {
+        setError(`Giá "giảm xuống" phải < ${fmtPrice(currentPrice)}`); return
+      }
+      addAlert(symbol, val, direction, { type: 'price' })
+      setTargetInput('')
+    } else {
+      const pv = parseFloat(percentInput)
+      if (!pv || pv <= 0 || pv > 100) { setError('Nhập % hợp lệ (0–100)'); return }
+      addAlert(symbol, 0, 'above', { type: 'percent', percentValue: pv, percentDir })
+      setPercentInput('')
+    }
     onAdded?.()
   }
 
   return (
     <div className="p-3 border-b border-[#1a1d26]">
-      <p className="text-[11px] text-[#848e9c] mb-2 font-medium">
-        Thêm alert — <span className="text-white">{baseName}/USDT</span>
-        <span className="ml-2 text-[#5e6673]">@ {fmtPrice(currentPrice)}</span>
-      </p>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[11px] text-[#848e9c] font-medium">
+          Alert — <span className="text-white">{baseName}/USDT</span>
+          <span className="ml-2 text-[#5e6673]">
+            @ {fmtPrice(currentPrice)}
+            <span className={`ml-1.5 ${currentChange >= 0 ? 'text-[#0ecb81]' : 'text-[#f6465d]'}`}>
+              {currentChange >= 0 ? '+' : ''}{currentChange.toFixed(2)}%
+            </span>
+          </span>
+        </p>
+      </div>
 
-      {/* Direction toggle */}
-      <div className="flex rounded overflow-hidden border border-[#2b3139] text-[11px] mb-2 w-full">
+      {/* Type toggle: Giá / % change */}
+      <div className="flex rounded overflow-hidden border border-[#2b3139] text-[10px] mb-2.5 w-full">
         {[
-          { value: 'above', label: '▲ Vượt qua', activeClass: 'bg-[#0ecb81] text-black' },
-          { value: 'below', label: '▼ Giảm xuống', activeClass: 'bg-[#f6465d] text-white' },
+          { value: 'price', label: '$ Giá' },
+          { value: 'percent', label: '% Change 24h' },
         ].map(opt => (
-          <button key={opt.value} onClick={() => { setDirection(opt.value); setError('') }}
-            className={`flex-1 py-1.5 font-medium transition-colors ${direction === opt.value
-                ? opt.activeClass
-                : 'text-[#848e9c] hover:text-white hover:bg-[#1e2329]'
-              }`}>
+          <button key={opt.value}
+            onClick={() => { setAlertType(opt.value); setError('') }}
+            className={`flex-1 py-1.5 font-semibold transition-colors ${alertType === opt.value
+              ? 'bg-[#f0b90b] text-black'
+              : 'text-[#848e9c] hover:text-white hover:bg-[#1e2329]'
+            }`}>
             {opt.label}
           </button>
         ))}
       </div>
 
-      {/* Price input + button */}
-      <div className="flex gap-2">
-        <input
-          type="number"
-          placeholder={`Giá mục tiêu...`}
-          value={targetInput}
-          onChange={e => { setTargetInput(e.target.value); setError('') }}
-          onKeyDown={e => e.key === 'Enter' && handleAdd()}
-          className="flex-1 bg-[#1e2329] text-white text-xs px-2.5 py-1.5 rounded border border-[#2b3139] focus:border-[#f0b90b] focus:outline-none placeholder-[#5e6673]"
-        />
-        <button onClick={handleAdd}
-          className="px-3 py-1.5 bg-[#f0b90b] text-black text-xs font-bold rounded hover:bg-[#f0b90bcc] transition-colors">
-          Thêm
-        </button>
-      </div>
+      {/* ── PRICE ALERT FORM ── */}
+      {alertType === 'price' && (
+        <>
+          <div className="flex rounded overflow-hidden border border-[#2b3139] text-[11px] mb-2 w-full">
+            {[
+              { value: 'above', label: '▲ Vượt qua', activeClass: 'bg-[#0ecb81] text-black' },
+              { value: 'below', label: '▼ Giảm xuống', activeClass: 'bg-[#f6465d] text-white' },
+            ].map(opt => (
+              <button key={opt.value} onClick={() => { setDirection(opt.value); setError('') }}
+                className={`flex-1 py-1.5 font-medium transition-colors ${direction === opt.value
+                  ? opt.activeClass : 'text-[#848e9c] hover:text-white hover:bg-[#1e2329]'
+                }`}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="number"
+              placeholder="Giá mục tiêu..."
+              value={targetInput}
+              onChange={e => { setTargetInput(e.target.value); setError('') }}
+              onKeyDown={e => e.key === 'Enter' && handleAdd()}
+              className="flex-1 bg-[#1e2329] text-white text-xs px-2.5 py-1.5 rounded border border-[#2b3139] focus:border-[#f0b90b] focus:outline-none placeholder-[#5e6673]"
+            />
+            <button onClick={handleAdd}
+              className="px-3 py-1.5 bg-[#f0b90b] text-black text-xs font-bold rounded hover:bg-[#f0b90bcc] transition-colors">
+              Thêm
+            </button>
+          </div>
+        </>
+      )}
 
-      {error && <p className="text-[#f6465d] text-[10px] mt-1">{error}</p>}
+      {/* ── PERCENT ALERT FORM ── */}
+      {alertType === 'percent' && (
+        <>
+          {/* Direction picker */}
+          <div className="flex rounded overflow-hidden border border-[#2b3139] text-[10px] mb-2 w-full">
+            {[
+              { value: 'above', label: '▲ Tăng ≥ X%', activeClass: 'bg-[#0ecb81] text-black' },
+              { value: 'below', label: '▼ Giảm ≥ X%', activeClass: 'bg-[#f6465d] text-white' },
+              { value: 'either', label: '⚡ |±X%|', activeClass: 'bg-[#f0b90b] text-black' },
+            ].map(opt => (
+              <button key={opt.value} onClick={() => { setPercentDir(opt.value); setError('') }}
+                className={`flex-1 py-1.5 font-semibold transition-colors ${percentDir === opt.value
+                  ? opt.activeClass : 'text-[#848e9c] hover:text-white hover:bg-[#1e2329]'
+                }`}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
 
-      {/* Notification warning */}
+          {/* Desc */}
+          <p className="text-[9px] text-[#5e6673] mb-2">
+            {percentDir === 'above' && 'Alert khi 24h change ≥ +X% (coin tăng mạnh)'}
+            {percentDir === 'below' && 'Alert khi 24h change ≤ −X% (coin giảm mạnh)'}
+            {percentDir === 'either' && 'Alert khi |24h change| ≥ X% (biến động bất kỳ chiều)'}
+          </p>
+
+          <div className="flex gap-2 items-center">
+            <div className="relative flex-1">
+              <input
+                type="number"
+                placeholder="VD: 5"
+                value={percentInput}
+                min="0.1" max="100" step="0.1"
+                onChange={e => { setPercentInput(e.target.value); setError('') }}
+                onKeyDown={e => e.key === 'Enter' && handleAdd()}
+                className="w-full bg-[#1e2329] text-white text-xs px-2.5 py-1.5 pr-8 rounded border border-[#2b3139] focus:border-[#f0b90b] focus:outline-none placeholder-[#5e6673]"
+              />
+              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#5e6673] text-[11px] font-medium pointer-events-none">%</span>
+            </div>
+            <button onClick={handleAdd}
+              className="px-3 py-1.5 bg-[#f0b90b] text-black text-xs font-bold rounded hover:bg-[#f0b90bcc] transition-colors">
+              Thêm
+            </button>
+          </div>
+
+          {/* Current 24h change badge */}
+          <div className="flex items-center gap-1.5 mt-2">
+            <span className="text-[9px] text-[#5e6673]">24h hiện tại:</span>
+            <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${currentChange >= 0 ? 'bg-[#0ecb8114] text-[#0ecb81]' : 'bg-[#f6465d14] text-[#f6465d]'}`}>
+              {currentChange >= 0 ? '+' : ''}{currentChange.toFixed(2)}%
+            </span>
+          </div>
+        </>
+      )}
+
+      {error && <p className="text-[#f6465d] text-[10px] mt-1.5">{error}</p>}
+
       {!notifGranted && (
         <div className="mt-2 text-[10px] text-[#f0b90b] bg-[#f0b90b11] border border-[#f0b90b33] rounded px-2 py-1.5">
           ⚠️ Chưa cấp quyền notification — âm thanh sẽ vẫn báo, nhưng không hiện popup
@@ -225,32 +316,60 @@ function AlertRow({ alert }) {
   const removeAlert = useAlertStore(s => s.removeAlert)
   const prices = useMarketStore(s => s.prices)
   const currentPrice = prices[alert.symbol]?.price ?? 0
+  const currentChange = prices[alert.symbol]?.change24h ?? 0
   const baseName = alert.symbol.replace('USDT', '')
 
-  const dist = alert.direction === 'above'
-    ? ((alert.targetPrice - currentPrice) / currentPrice * 100)
-    : ((currentPrice - alert.targetPrice) / currentPrice * 100)
+  const isPercent = alert.type === 'percent'
 
-  const distText = isFinite(dist) ? `${Math.abs(dist).toFixed(2)}% away` : ''
+  // Distance info
+  let distText = ''
+  if (!isPercent && !alert.triggered) {
+    const dist = alert.direction === 'above'
+      ? ((alert.targetPrice - currentPrice) / currentPrice * 100)
+      : ((currentPrice - alert.targetPrice) / currentPrice * 100)
+    if (isFinite(dist)) distText = `${Math.abs(dist).toFixed(2)}% away`
+  }
+  if (isPercent && !alert.triggered) {
+    const pv = alert.percentValue ?? 0
+    const remaining = pv - Math.abs(currentChange)
+    if (remaining > 0) distText = `còn ${remaining.toFixed(2)}% nữa`
+    else distText = 'sắp kích hoạt'
+  }
+
+  // Badge color/label
+  let badgeColor = '', badgeBg = '', badgeLabel = ''
+  if (isPercent) {
+    if (alert.percentDir === 'above') { badgeColor = '#0ecb81'; badgeBg = '#0ecb8122'; badgeLabel = '▲%' }
+    else if (alert.percentDir === 'below') { badgeColor = '#f6465d'; badgeBg = '#f6465d22'; badgeLabel = '▼%' }
+    else { badgeColor = '#f0b90b'; badgeBg = '#f0b90b22'; badgeLabel = '⚡%' }
+  } else {
+    if (alert.direction === 'above') { badgeColor = '#0ecb81'; badgeBg = '#0ecb8122'; badgeLabel = '▲' }
+    else { badgeColor = '#f6465d'; badgeBg = '#f6465d22'; badgeLabel = '▼' }
+  }
 
   return (
-    <div className={`flex items-center justify-between px-3 py-2.5 border-b border-[#1a1d26]/60 ${alert.triggered ? 'opacity-50' : ''
-      }`}>
+    <div className={`flex items-center justify-between px-3 py-2.5 border-b border-[#1a1d26]/60 ${alert.triggered ? 'opacity-50' : ''}`}>
       <div className="flex flex-col gap-0.5 min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className={`text-[9px] font-bold px-1 rounded ${alert.direction === 'above'
-              ? 'bg-[#0ecb8122] text-[#0ecb81]'
-              : 'bg-[#f6465d22] text-[#f6465d]'
-            }`}>
-            {alert.direction === 'above' ? '▲' : '▼'}
+          <span className="text-[9px] font-bold px-1 rounded" style={{ color: badgeColor, background: badgeBg }}>
+            {badgeLabel}
           </span>
           <span className="text-white text-[11px] font-medium">{baseName}/USDT</span>
           {alert.triggered && (
             <span className="text-[9px] bg-[#f0b90b22] text-[#f0b90b] px-1 rounded">✓ Đã kích hoạt</span>
           )}
         </div>
+
+        {/* Target value */}
         <div className="flex items-center gap-2">
-          <span className="text-[#eaecef] text-[11px]">{fmtPrice(alert.targetPrice)}</span>
+          {isPercent ? (
+            <span className="text-[#eaecef] text-[11px]">
+              {alert.percentDir === 'above' ? '+' : alert.percentDir === 'below' ? '−' : '±'}
+              {alert.percentValue}%
+            </span>
+          ) : (
+            <span className="text-[#eaecef] text-[11px]">{fmtPrice(alert.targetPrice)}</span>
+          )}
           {!alert.triggered && distText && (
             <span className="text-[9px] text-[#5e6673]">{distText}</span>
           )}
@@ -277,36 +396,73 @@ function fmtDateTime(ts) {
 // ── History Row ───────────────────────────────────────────────────────────
 function HistoryRow({ entry }) {
   const baseName = entry.symbol.replace('USDT', '')
+  const isPercent = entry.type === 'percent'
+
+  // Price alert display
   const isAbove = entry.direction === 'above'
   const diff = entry.triggeredPrice - entry.targetPrice
-  const diffPct = (Math.abs(diff) / entry.targetPrice * 100).toFixed(3)
+  const diffPct = entry.targetPrice > 0 ? (Math.abs(diff) / entry.targetPrice * 100).toFixed(3) : null
+
+  // Percent alert display
+  const pChange = entry.triggeredChange
+  const pv = entry.percentValue
+  const pDir = entry.percentDir
+
+  let badgeColor = '#848e9c', badgeBg = '#2b3139', badgeLabel = '?'
+  if (isPercent) {
+    if (pDir === 'above') { badgeColor = '#0ecb81'; badgeBg = '#0ecb8122'; badgeLabel = '▲%' }
+    else if (pDir === 'below') { badgeColor = '#f6465d'; badgeBg = '#f6465d22'; badgeLabel = '▼%' }
+    else { badgeColor = '#f0b90b'; badgeBg = '#f0b90b22'; badgeLabel = '⚡%' }
+  } else {
+    if (isAbove) { badgeColor = '#0ecb81'; badgeBg = '#0ecb8122'; badgeLabel = '▲' }
+    else { badgeColor = '#f6465d'; badgeBg = '#f6465d22'; badgeLabel = '▼' }
+  }
 
   return (
     <div className="px-3 py-2.5 border-b border-[#1a1d26]/60 hover:bg-[#0d1117] transition-colors">
-      {/* Row 1: coin + direction + time */}
+      {/* Row 1: coin + badge + time */}
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-1.5">
-          <span className={`text-[9px] font-bold px-1 rounded ${isAbove ? 'bg-[#0ecb8122] text-[#0ecb81]' : 'bg-[#f6465d22] text-[#f6465d]'}`}>
-            {isAbove ? '▲' : '▼'}
+          <span className="text-[9px] font-bold px-1 rounded" style={{ color: badgeColor, background: badgeBg }}>
+            {badgeLabel}
           </span>
           <span className="text-[11px] font-semibold text-white">{baseName}/USDT</span>
         </div>
         <span className="text-[9px] text-[#5e6673]">{fmtDateTime(entry.triggeredAt)}</span>
       </div>
 
-      {/* Row 2: target → triggered price */}
-      <div className="flex items-center gap-1.5 text-[10px]">
-        <span className="text-[#5e6673]">Mục tiêu</span>
-        <span className="text-[#eaecef] font-medium">{fmtPrice(entry.targetPrice)}</span>
-        <svg width="10" height="10" viewBox="0 0 10 10" className="text-[#5e6673] flex-shrink-0">
-          <path d="M2 5h6M6 3l2 2-2 2" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-        <span className="text-[#5e6673]">Giá kích hoạt</span>
-        <span className={`font-semibold ${isAbove ? 'text-[#0ecb81]' : 'text-[#f6465d]'}`}>
-          {fmtPrice(entry.triggeredPrice)}
-        </span>
-        <span className="text-[#5e6673] ml-auto text-[9px]">±{diffPct}%</span>
-      </div>
+      {/* Row 2: detail */}
+      {isPercent ? (
+        <div className="flex items-center gap-1.5 text-[10px]">
+          <span className="text-[#5e6673]">Ngưỡng</span>
+          <span className="text-[#eaecef] font-medium">
+            {pDir === 'above' ? '+' : pDir === 'below' ? '−' : '±'}{pv}%
+          </span>
+          <svg width="10" height="10" viewBox="0 0 10 10" className="text-[#5e6673] flex-shrink-0">
+            <path d="M2 5h6M6 3l2 2-2 2" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span className="text-[#5e6673]">24h change</span>
+          {pChange != null && (
+            <span className={`font-semibold ${pChange >= 0 ? 'text-[#0ecb81]' : 'text-[#f6465d]'}`}>
+              {pChange >= 0 ? '+' : ''}{pChange.toFixed(2)}%
+            </span>
+          )}
+          <span className="text-[9px] text-[#5e6673] ml-auto">@ {fmtPrice(entry.triggeredPrice)}</span>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5 text-[10px]">
+          <span className="text-[#5e6673]">Mục tiêu</span>
+          <span className="text-[#eaecef] font-medium">{fmtPrice(entry.targetPrice)}</span>
+          <svg width="10" height="10" viewBox="0 0 10 10" className="text-[#5e6673] flex-shrink-0">
+            <path d="M2 5h6M6 3l2 2-2 2" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span className="text-[#5e6673]">Kích hoạt</span>
+          <span className={`font-semibold ${isAbove ? 'text-[#0ecb81]' : 'text-[#f6465d]'}`}>
+            {fmtPrice(entry.triggeredPrice)}
+          </span>
+          {diffPct && <span className="text-[#5e6673] ml-auto text-[9px]">±{diffPct}%</span>}
+        </div>
+      )}
     </div>
   )
 }

@@ -1,5 +1,4 @@
-// src/hooks/useAlertChecker.js
-// v12: đọc alertVolume + alertTone từ chartStore thay vì hardcode
+// src/hooks/useAlertChecker.js — v30: thêm alert theo % change
 
 import { useEffect, useRef } from 'react'
 import { useMarketStore } from '../store/marketStore'
@@ -88,11 +87,46 @@ export function useAlertChecker() {
       if (!data?.price || !isFinite(data.price)) return
 
       const currentPrice = data.price
-      const hit = alert.direction === 'above'
-        ? currentPrice >= alert.targetPrice
-        : currentPrice <= alert.targetPrice
+      let hit = false
+      let notifBody = ''
 
-      if (!hit) return
+      if (alert.type === 'percent') {
+        // ── % change alert ───────────────────────────────────────────────────
+        const change = data.change24h   // số thực, e.g. 5.23 hoặc -3.1
+        if (change == null || !isFinite(change)) return
+
+        const pv = alert.percentValue ?? 0
+        if (alert.percentDir === 'above') {
+          hit = change >= pv
+        } else if (alert.percentDir === 'below') {
+          hit = change <= -pv
+        } else {
+          // 'either' — |change| >= pv
+          hit = Math.abs(change) >= pv
+        }
+
+        if (!hit) return
+
+        const dirLabel = alert.percentDir === 'above'
+          ? `▲ +${pv}%`
+          : alert.percentDir === 'below'
+            ? `▼ -${pv}%`
+            : `⚡ |${pv}%|`
+        const baseName = alert.symbol.replace('USDT', '')
+        const sign = change >= 0 ? '+' : ''
+        notifBody = `${dirLabel} triggered\n24h change: ${sign}${change.toFixed(2)}%\nGiá: ${fmtPrice(currentPrice)}`
+
+      } else {
+        // ── price alert (logic gốc) ──────────────────────────────────────────
+        hit = alert.direction === 'above'
+          ? currentPrice >= alert.targetPrice
+          : currentPrice <= alert.targetPrice
+
+        if (!hit) return
+
+        const dirText = alert.direction === 'above' ? '▲ Vượt qua' : '▼ Giảm xuống'
+        notifBody = `${dirText} ${fmtPrice(alert.targetPrice)}\nGiá hiện tại: ${fmtPrice(currentPrice)}`
+      }
 
       markTriggeredRef.current(alert.id)
 
@@ -100,25 +134,30 @@ export function useAlertChecker() {
       addNotifHistoryRef.current({
         id: alert.id,
         symbol: alert.symbol,
+        type: alert.type ?? 'price',
         targetPrice: alert.targetPrice,
+        percentValue: alert.percentValue,
+        percentDir: alert.percentDir,
         triggeredPrice: currentPrice,
+        triggeredChange: data.change24h,
         direction: alert.direction,
         triggeredAt: Date.now(),
       })
 
-      // Phát âm với settings hiện tại
-      playBeep(alert.direction, soundRef.current.tone, soundRef.current.volume)
+      // Phát âm
+      const beepDir = (alert.type === 'percent')
+        ? (data.change24h >= 0 ? 'above' : 'below')
+        : alert.direction
+      playBeep(beepDir, soundRef.current.tone, soundRef.current.volume)
 
       // Browser notification
-      const dirText = alert.direction === 'above' ? '▲ Vượt qua' : '▼ Giảm xuống'
       const baseName = alert.symbol.replace('USDT', '')
       const title = `🔔 Alert: ${baseName}/USDT`
-      const body = `${dirText} ${fmtPrice(alert.targetPrice)}\nGiá hiện tại: ${fmtPrice(currentPrice)}`
 
       if (Notification.permission === 'granted') {
         try {
           const notif = new Notification(title, {
-            body,
+            body: notifBody,
             icon: '/favicon.ico',
             tag: `alert-${alert.id}`,
             requireInteraction: false,
@@ -129,7 +168,7 @@ export function useAlertChecker() {
         }
       }
 
-      console.log(`[Alert] TRIGGERED: ${alert.symbol} ${alert.direction} ${alert.targetPrice} (current: ${currentPrice})`)
+      console.log(`[Alert] TRIGGERED: ${alert.symbol} type=${alert.type ?? 'price'}`, alert)
     })
   }, [prices])
 }
