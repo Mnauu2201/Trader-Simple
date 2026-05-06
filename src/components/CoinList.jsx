@@ -1,7 +1,6 @@
-// src/components/CoinList.jsx
-// UI redesign — logic 100% giữ nguyên từ v14
+// src/components/CoinList.jsx — v28: Screener Tab
 
-import { useEffect, useState, useMemo, useRef, forwardRef, useImperativeHandle } from 'react'
+import { useEffect, useState, useMemo, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { useMarketStore } from '../store/marketStore'
 import { useChartStore } from '../store/chartStore'
 import { useWatchlistStore } from '../store/watchlistStore'
@@ -42,6 +41,151 @@ const SORT_OPTIONS = [
 ]
 
 const GAINERS_INTERVAL_MS = 3000
+const SCREENER_POLL_MS = 60_000   // refresh RSI mỗi 60s
+const SCREENER_COINS = 60         // scan top 60 coin theo volume
+const RSI_PERIOD = 14
+
+// ── Tính RSI(14) từ mảng close prices ────────────────────────────────────────
+function calcRSI(closes) {
+  if (closes.length < RSI_PERIOD + 1) return null
+  let gainSum = 0, lossSum = 0
+  for (let i = 1; i <= RSI_PERIOD; i++) {
+    const diff = closes[i] - closes[i - 1]
+    if (diff >= 0) gainSum += diff
+    else lossSum -= diff
+  }
+  let avgGain = gainSum / RSI_PERIOD
+  let avgLoss = lossSum / RSI_PERIOD
+  for (let i = RSI_PERIOD + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1]
+    const g = diff >= 0 ? diff : 0
+    const l = diff < 0 ? -diff : 0
+    avgGain = (avgGain * (RSI_PERIOD - 1) + g) / RSI_PERIOD
+    avgLoss = (avgLoss * (RSI_PERIOD - 1) + l) / RSI_PERIOD
+  }
+  if (avgLoss === 0) return 100
+  const rs = avgGain / avgLoss
+  return 100 - 100 / (1 + rs)
+}
+
+// ── Fetch kline close prices cho 1 symbol ────────────────────────────────────
+async function fetchKlineCloses(symbol, market) {
+  const base = market === 'futures'
+    ? 'https://fapi.binance.com/fapi/v1/klines'
+    : 'https://api.binance.com/api/v3/klines'
+  const url = `${base}?symbol=${symbol}&interval=1h&limit=${RSI_PERIOD + 2}`
+  const r = await fetch(url)
+  if (!r.ok) throw new Error(`HTTP ${r.status}`)
+  const data = await r.json()
+  return data.map(c => parseFloat(c[4])) // close price
+}
+
+// ── Screener filter presets ───────────────────────────────────────────────────
+const SCREENER_PRESETS = [
+  {
+    id: 'rsi_os',
+    label: 'RSI < 30',
+    desc: 'Oversold — có thể hồi phục',
+    color: '#0ecb81',
+    icon: '↙',
+    test: (d) => d.rsi != null && d.rsi < 30,
+  },
+  {
+    id: 'rsi_ob',
+    label: 'RSI > 70',
+    desc: 'Overbought — có thể điều chỉnh',
+    color: '#f6465d',
+    icon: '↗',
+    test: (d) => d.rsi != null && d.rsi > 70,
+  },
+  {
+    id: 'vol_spike',
+    label: 'Vol Spike',
+    desc: 'Volume > 2× trung bình 7 ngày',
+    color: '#a855f7',
+    icon: '⚡',
+    test: (d, prices) => {
+      const qv = prices[d.symbol]?.quoteVolume
+      const avg = d.avgVol7d
+      if (!qv || !avg || avg === 0) return false
+      return qv > avg * 2
+    },
+  },
+  {
+    id: 'big_move',
+    label: '|%| > 5%',
+    desc: 'Biến động mạnh trong 24h',
+    color: '#f0b90b',
+    icon: '🔥',
+    test: (d, prices) => {
+      const ch = prices[d.symbol]?.change24h
+      return ch != null && Math.abs(ch) > 5
+    },
+  },
+]
+
+// ── Hook: useScreener — tính RSI + Vol cho top coins ─────────────────────────
+function useScreener(allSymbols, market, prices, isActive) {
+  const [screenData, setScreenData] = useState({})   // { symbol: { rsi, avgVol7d, loading, error } }
+  const [scanTime, setScanTime] = useState(null)
+  const [scanning, setScanning] = useState(false)
+  const cancelRef = useRef(false)
+
+  const scan = useCallback(async () => {
+    if (scanning) return
+    const symbols = allSymbols.slice(0, SCREENER_COINS)
+    if (symbols.length === 0) return
+
+    cancelRef.current = false
+    setScanning(true)
+
+    // Fetch song song, tối đa 10 concurrent để không bị rate limit
+    const CHUNK = 10
+    const results = {}
+
+    for (let i = 0; i < symbols.length; i += CHUNK) {
+      if (cancelRef.current) break
+      const chunk = symbols.slice(i, i + CHUNK)
+      const settled = await Promise.allSettled(
+        chunk.map(async (sym) => {
+          const closes = await fetchKlineCloses(sym, market)
+          const rsi = calcRSI(closes)
+          // avgVol7d = lấy từ prices (đã có) — không cần fetch thêm
+          return { symbol: sym, rsi }
+        })
+      )
+      settled.forEach((res, idx) => {
+        const sym = chunk[idx]
+        if (res.status === 'fulfilled') {
+          results[sym] = { rsi: res.value.rsi, error: false }
+        } else {
+          results[sym] = { rsi: null, error: true }
+        }
+      })
+      // Nhỏ delay giữa các chunk tránh rate limit
+      if (i + CHUNK < symbols.length) await new Promise(r => setTimeout(r, 200))
+    }
+
+    if (!cancelRef.current) {
+      setScreenData(results)
+      setScanTime(new Date())
+      setScanning(false)
+    }
+  }, [allSymbols, market, scanning])
+
+  // Chạy scan khi tab screener active lần đầu, rồi poll mỗi 60s
+  useEffect(() => {
+    if (!isActive) return
+    scan()
+    const timer = setInterval(scan, SCREENER_POLL_MS)
+    return () => {
+      cancelRef.current = true
+      clearInterval(timer)
+    }
+  }, [isActive, market]) // re-scan khi đổi market
+
+  return { screenData, scanTime, scanning, scan }
+}
 
 // Star button — giữ nguyên logic gốc
 function StarButton({ symbol, isPinned, onToggle }) {
@@ -88,6 +232,11 @@ const CoinList = forwardRef(function CoinList(props, ref) {
   const glTimerRef = useRef(null)
   const allSymbolsRef = useRef(allSymbols)
   useEffect(() => { allSymbolsRef.current = allSymbols }, [allSymbols])
+
+  // ── Screener state ─────────────────────────────────────────────────────────
+  const [screenerPreset, setScreenerPreset] = useState('rsi_os')
+  const isScreenerActive = activeTab === 'screener'
+  const { screenData, scanTime, scanning, scan } = useScreener(allSymbols, market, prices, isScreenerActive)
 
   // ── Keyboard navigation ────────────────────────────────────────────────────
   const [kbIndex, setKbIndex] = useState(-1)   // -1 = không có focus keyboard
@@ -295,13 +444,25 @@ const CoinList = forwardRef(function CoinList(props, ref) {
     { id: 'watchlist', label: '★' },
     { id: 'gainers', label: '▲' },
     { id: 'losers', label: '▼' },
+    { id: 'screener', label: '⚡' },
   ]
 
   const tabColor = (id) => {
     if (id === 'gainers') return '#0ecb81'
     if (id === 'losers') return '#f6465d'
+    if (id === 'screener') return '#a855f7'
     return '#f0b90b'
   }
+
+  // Đếm số coin pass preset hiện tại (để hiện badge)
+  const screenerCount = useMemo(() => {
+    const preset = SCREENER_PRESETS.find(p => p.id === screenerPreset)
+    if (!preset) return 0
+    return allSymbols.slice(0, SCREENER_COINS).filter(sym => {
+      const d = { ...screenData[sym], symbol: sym }
+      return preset.test(d, prices)
+    }).length
+  }, [screenerPreset, screenData, allSymbols, prices])
 
   return (
     <div className="flex flex-col h-full" style={{ background: '#0d1117' }}>
@@ -331,6 +492,15 @@ const CoinList = forwardRef(function CoinList(props, ref) {
                     color: isActive ? '#000' : '#566475',
                   }}>
                   {watchSymbols.length}
+                </span>
+              )}
+              {tab.id === 'screener' && screenerCount > 0 && (
+                <span className="absolute top-1 right-0.5 text-[7px] font-bold leading-none px-1 py-0.5 rounded-full"
+                  style={{
+                    background: isActive ? '#a855f7' : '#2a3040',
+                    color: isActive ? '#fff' : '#566475',
+                  }}>
+                  {screenerCount}
                 </span>
               )}
             </button>
@@ -522,6 +692,186 @@ const CoinList = forwardRef(function CoinList(props, ref) {
           </div>
         </>
       )}
+
+      {/* ══ TAB: SCREENER ══ */}
+      {activeTab === 'screener' && (() => {
+        const preset = SCREENER_PRESETS.find(p => p.id === screenerPreset)
+        const scanSymbols = allSymbols.slice(0, SCREENER_COINS)
+        const results = scanSymbols
+          .filter(sym => {
+            const d = { ...screenData[sym], symbol: sym }
+            return preset && preset.test(d, prices)
+          })
+          .map(sym => ({ sym, rsi: screenData[sym]?.rsi }))
+          .sort((a, b) => {
+            // RSI oversold → sort tăng dần (thấp nhất trên đầu)
+            // RSI overbought → sort giảm dần (cao nhất trên đầu)
+            if (screenerPreset === 'rsi_os') return (a.rsi ?? 99) - (b.rsi ?? 99)
+            if (screenerPreset === 'rsi_ob') return (b.rsi ?? 0) - (a.rsi ?? 0)
+            // Vol spike / big move → sort theo volume
+            return (prices[b.sym]?.quoteVolume ?? 0) - (prices[a.sym]?.quoteVolume ?? 0)
+          })
+
+        return (
+          <>
+            {/* Header + refresh */}
+            <div className="flex items-center justify-between px-2 py-1.5 flex-shrink-0"
+              style={{ borderBottom: '0.5px solid #161b22' }}>
+              <span className="text-[9px] font-semibold" style={{ color: '#a855f7' }}>
+                Screener · Top {SCREENER_COINS}
+              </span>
+              <div className="flex items-center gap-1.5">
+                {scanTime && !scanning && (
+                  <span className="text-[8px]" style={{ color: '#3a4555' }}>
+                    {scanTime.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                )}
+                <button
+                  onClick={scan}
+                  disabled={scanning}
+                  title="Quét lại"
+                  className="flex items-center justify-center w-5 h-5 rounded transition-colors"
+                  style={{ color: scanning ? '#3a4555' : '#566475' }}
+                  onMouseEnter={e => { if (!scanning) e.currentTarget.style.color = '#a855f7' }}
+                  onMouseLeave={e => { if (!scanning) e.currentTarget.style.color = '#566475' }}
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                    strokeLinecap="round" strokeLinejoin="round"
+                    style={{ animation: scanning ? 'spin 1s linear infinite' : 'none' }}>
+                    <polyline points="23 4 23 10 17 10" />
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Preset selector */}
+            <div className="flex flex-shrink-0 px-1.5 py-1.5 gap-1 flex-wrap"
+              style={{ borderBottom: '0.5px solid #161b22' }}>
+              {SCREENER_PRESETS.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => setScreenerPreset(p.id)}
+                  title={p.desc}
+                  className="flex items-center gap-1 px-2 py-1 rounded text-[9px] font-semibold transition-all"
+                  style={{
+                    background: screenerPreset === p.id ? `${p.color}22` : '#161b22',
+                    color: screenerPreset === p.id ? p.color : '#566475',
+                    border: `0.5px solid ${screenerPreset === p.id ? p.color + '66' : '#2a3040'}`,
+                  }}
+                >
+                  <span>{p.icon}</span>
+                  <span>{p.label}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Desc */}
+            <div className="px-2 py-1 flex-shrink-0" style={{ borderBottom: '0.5px solid #161b22' }}>
+              <span className="text-[9px]" style={{ color: '#566475' }}>{preset?.desc}</span>
+            </div>
+
+            {/* Scanning skeleton */}
+            {scanning && Object.keys(screenData).length === 0 && (
+              <div className="flex flex-col items-center justify-center h-32 gap-2">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="2"
+                  strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}>
+                  <polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                </svg>
+                <span className="text-[10px]" style={{ color: '#566475' }}>Đang quét {SCREENER_COINS} coin...</span>
+                <span className="text-[9px]" style={{ color: '#3a4555' }}>khoảng 10–15 giây</span>
+              </div>
+            )}
+
+            {/* No result */}
+            {!scanning && results.length === 0 && Object.keys(screenData).length > 0 && (
+              <div className="flex flex-col items-center justify-center h-24 gap-2 px-4 text-center">
+                <span className="text-[20px]" style={{ opacity: 0.4 }}>{preset?.icon}</span>
+                <span className="text-[10px]" style={{ color: '#566475' }}>
+                  Không có coin nào thỏa điều kiện
+                </span>
+              </div>
+            )}
+
+            {/* Results list */}
+            {!scanning || Object.keys(screenData).length > 0 ? (
+              <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: '#2a3040 transparent' }}>
+                {results.map(({ sym, rsi }, idx) => {
+                  const d = prices[sym] || {}
+                  const isUp = (d.change24h ?? 0) >= 0
+                  const isSelected = symbol === sym
+                  const baseName = sym.replace('USDT', '')
+                  const pinned = isPinnedFn(sym)
+                  const changeColor = isUp ? '#0ecb81' : '#f6465d'
+                  const rsiColor = rsi == null ? '#3a4555'
+                    : rsi < 30 ? '#0ecb81'
+                    : rsi > 70 ? '#f6465d'
+                    : '#566475'
+
+                  return (
+                    <div
+                      key={sym}
+                      onClick={() => setSymbol(sym)}
+                      className="flex items-center gap-1.5 px-2 py-1.5 cursor-pointer transition-all"
+                      style={{
+                        background: isSelected ? '#a855f714' : 'transparent',
+                        borderLeft: isSelected ? '2px solid #a855f7' : '2px solid transparent',
+                        borderBottom: '0.5px solid #161b22',
+                      }}
+                      onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = '#161b2280' }}
+                      onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = 'transparent' }}
+                    >
+                      <StarButton symbol={sym} isPinned={pinned} onToggle={toggleWatchlist} />
+
+                      {/* Rank */}
+                      <span className="text-[9px] font-bold w-4 flex-shrink-0 text-center" style={{
+                        color: idx === 0 ? '#f0b90b' : idx === 1 ? '#8b98a5' : '#3a4555'
+                      }}>{idx + 1}</span>
+
+                      <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                        <span className="text-[11px] font-semibold truncate" style={{ color: '#c9d1d9' }}>{baseName}</span>
+                        <div className="flex items-center gap-1.5">
+                          {/* RSI badge */}
+                          {rsi != null && (
+                            <span className="text-[8px] font-bold px-1 py-0.5 rounded-sm tabular-nums"
+                              style={{ background: `${rsiColor}22`, color: rsiColor }}>
+                              RSI {rsi.toFixed(1)}
+                            </span>
+                          )}
+                          {screenData[sym]?.error && (
+                            <span className="text-[8px]" style={{ color: '#3a4555' }}>err</span>
+                          )}
+                          <span className="text-[9px]" style={{ color: '#3a4555' }}>{fmtVol(d.quoteVolume)}</span>
+                        </div>
+                      </div>
+
+                      <div className="text-right flex flex-col gap-0.5 flex-shrink-0">
+                        <span className="text-[11px] font-semibold tabular-nums" style={{ color: '#c9d1d9' }}>
+                          {fmtPrice(d.price)}
+                        </span>
+                        <span className="text-[9px] font-semibold tabular-nums px-1 rounded-sm"
+                          style={{ color: changeColor, background: isUp ? '#0ecb8114' : '#f6465d14' }}>
+                          {d.change24h != null ? `${isUp ? '+' : ''}${d.change24h.toFixed(2)}%` : '---'}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : null}
+
+            {/* Scan progress khi đang refresh */}
+            {scanning && Object.keys(screenData).length > 0 && (
+              <div className="flex-shrink-0 py-1 text-center" style={{ borderTop: '0.5px solid #161b22' }}>
+                <span className="text-[9px]" style={{ color: '#566475' }}>⟳ Đang cập nhật...</span>
+              </div>
+            )}
+
+            {/* CSS animation cho spinner */}
+            <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+          </>
+        )
+      })()}
 
     </div>
   )
