@@ -9,6 +9,7 @@ import AlertPanel from './components/AlertPanel'
 import OrderBookPanel from './components/OrderBookPanel'
 import RecentTradesPanel from './components/RecentTradesPanel'
 import LongShortPanel from './components/LongShortPanel'
+import HeatmapPanel from './components/HeatmapPanel'
 import { useAlertChecker } from './hooks/useAlertChecker'
 import { useAlertStore } from './store/alertStore'
 import { useChartStore } from './store/chartStore'
@@ -19,9 +20,25 @@ function AlertEngine() {
   return null
 }
 
-const PANEL_MODES = ['longshort', 'orderbook', 'trades', 'alerts']
+const PANEL_MODES = ['heatmap', 'longshort', 'orderbook', 'trades', 'alerts']
 
 const PANEL_CONFIG = [
+  {
+    id: 'heatmap',
+    label: 'Heatmap',
+    color: '#22d3ee',
+    width: 'w-[280px]',
+    Component: HeatmapPanel,
+    wrapClass: 'flex flex-col',
+    icon: (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+        <rect x="2" y="2" width="8" height="8" rx="1.5" fill="currentColor" opacity="0.85" />
+        <rect x="12" y="2" width="10" height="8" rx="1.5" fill="currentColor" opacity="0.45" />
+        <rect x="2" y="12" width="5" height="10" rx="1.5" fill="currentColor" opacity="0.6" />
+        <rect x="9" y="12" width="13" height="10" rx="1.5" fill="currentColor" opacity="0.3" />
+      </svg>
+    ),
+  },
   {
     id: 'longshort',
     label: 'L/S Ratio',
@@ -385,8 +402,8 @@ function useShareURL() {
     const i = params.get('interval')
     const m = params.get('market')
 
-    const VALID_INTERVALS = ['1m','3m','5m','15m','30m','1h','2h','4h','6h','8h','12h','1d','3d','1w','1M']
-    const VALID_MARKETS   = ['futures', 'spot']
+    const VALID_INTERVALS = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M']
+    const VALID_MARKETS = ['futures', 'spot']
 
     if (s && s.endsWith('USDT')) setSymbol(s)
     if (i && VALID_INTERVALS.includes(i)) setInterval(i)
@@ -473,9 +490,9 @@ export default function App() {
   // ── Toggle fullscreen helper ─────────────────────────────────────────────
   const toggleFullscreen = useCallback(() => {
     if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {})
+      document.documentElement.requestFullscreen().catch(() => { })
     } else {
-      document.exitFullscreen().catch(() => {})
+      document.exitFullscreen().catch(() => { })
     }
   }, [])
 
@@ -567,7 +584,7 @@ export default function App() {
           {/* TAB: Alerts */}
           {mobileTab === 'alerts' && (
             <div className="h-full overflow-hidden">
-              <AlertPanel onClose={() => {}} />
+              <AlertPanel onClose={() => { }} />
             </div>
           )}
 
