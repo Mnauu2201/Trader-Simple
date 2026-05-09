@@ -68,16 +68,74 @@ function calcRSI(closes) {
   return 100 - 100 / (1 + rs)
 }
 
-// ── Fetch kline close prices cho 1 symbol ────────────────────────────────────
+// ── Fetch kline data cho 1 symbol (đủ để tính RSI + StochRSI) ────────────────
+// Trả về mảng close prices, đủ limit cho cả StochRSI(14,14,3,3)
+// StochRSI cần: RSI_PERIOD(14) seed + stoch_period(14) + smooth_k(3) + smooth_d(3)
+// → tối thiểu 14+14+3+3 = 34 candles, lấy 60 để dư
+const STOCHRSI_PERIOD = 14
+const STOCHRSI_K = 3
+const KLINE_LIMIT = 60
+
 async function fetchKlineCloses(symbol, market) {
   const base = market === 'futures'
     ? 'https://fapi.binance.com/fapi/v1/klines'
     : 'https://api.binance.com/api/v3/klines'
-  const url = `${base}?symbol=${symbol}&interval=1h&limit=${RSI_PERIOD + 2}`
+  const url = `${base}?symbol=${symbol}&interval=1h&limit=${KLINE_LIMIT}`
   const r = await fetch(url)
   if (!r.ok) throw new Error(`HTTP ${r.status}`)
   const data = await r.json()
   return data.map(c => parseFloat(c[4])) // close price
+}
+
+// ── Tính StochRSI K line từ mảng closes ──────────────────────────────────────
+// Dùng cùng Wilder smoothing như ChartPanel để nhất quán
+// Trả về giá trị K cuối cùng (0–100), hoặc null nếu không đủ data
+function calcStochRSI_K(closes) {
+  const minLen = RSI_PERIOD + STOCHRSI_PERIOD + STOCHRSI_K - 1
+  if (closes.length < minLen) return null
+
+  // 1) Tính toàn bộ dãy RSI
+  const rsiValues = []
+  let avgGain = 0, avgLoss = 0
+  for (let i = 1; i <= RSI_PERIOD; i++) {
+    const diff = closes[i] - closes[i - 1]
+    if (diff >= 0) avgGain += diff
+    else avgLoss -= diff
+  }
+  avgGain /= RSI_PERIOD
+  avgLoss /= RSI_PERIOD
+  const rs0 = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss)
+  rsiValues.push(rs0)
+
+  for (let i = RSI_PERIOD + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1]
+    const g = diff >= 0 ? diff : 0
+    const l = diff < 0 ? -diff : 0
+    avgGain = (avgGain * (RSI_PERIOD - 1) + g) / RSI_PERIOD
+    avgLoss = (avgLoss * (RSI_PERIOD - 1) + l) / RSI_PERIOD
+    const rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss)
+    rsiValues.push(rsi)
+  }
+
+  // 2) Tính StochRSI raw = (RSI - minRSI[period]) / (maxRSI[period] - minRSI[period])
+  const stochRaw = []
+  for (let i = STOCHRSI_PERIOD - 1; i < rsiValues.length; i++) {
+    const window = rsiValues.slice(i - STOCHRSI_PERIOD + 1, i + 1)
+    const minR = Math.min(...window)
+    const maxR = Math.max(...window)
+    stochRaw.push(maxR === minR ? 0 : ((rsiValues[i] - minR) / (maxR - minR)) * 100)
+  }
+
+  if (stochRaw.length < STOCHRSI_K) return null
+
+  // 3) Smooth K = SMA(stochRaw, K_period=3)
+  const kValues = []
+  for (let i = STOCHRSI_K - 1; i < stochRaw.length; i++) {
+    const sum = stochRaw.slice(i - STOCHRSI_K + 1, i + 1).reduce((a, b) => a + b, 0)
+    kValues.push(sum / STOCHRSI_K)
+  }
+
+  return kValues.length > 0 ? kValues[kValues.length - 1] : null
 }
 
 // ── Screener filter presets ───────────────────────────────────────────────────
@@ -85,18 +143,55 @@ const SCREENER_PRESETS = [
   {
     id: 'rsi_os',
     label: 'RSI < 30',
-    desc: 'Oversold — có thể hồi phục',
+    desc: 'RSI(14) oversold — có thể hồi phục',
     color: '#0ecb81',
     icon: '↙',
+    needsFetch: true,
     test: (d) => d.rsi != null && d.rsi < 30,
   },
   {
     id: 'rsi_ob',
     label: 'RSI > 70',
-    desc: 'Overbought — có thể điều chỉnh',
+    desc: 'RSI(14) overbought — có thể điều chỉnh',
     color: '#f6465d',
     icon: '↗',
+    needsFetch: true,
     test: (d) => d.rsi != null && d.rsi > 70,
+  },
+  {
+    id: 'stochrsi_os',
+    label: 'StochRSI < 20',
+    desc: 'StochRSI K(14,14,3) < 20 — oversold mạnh',
+    color: '#22d3ee',
+    icon: '🌊',
+    needsFetch: true,
+    test: (d) => d.stochK != null && d.stochK < 20,
+  },
+  {
+    id: 'near_high',
+    label: 'Near High',
+    desc: 'Giá ≥ 95% của High 24h — gần đỉnh',
+    color: '#f0b90b',
+    icon: '🔝',
+    needsFetch: false,
+    test: (d, prices) => {
+      const p = prices[d.symbol]
+      if (!p?.price || !p?.high24h || p.high24h === 0) return false
+      return p.price >= p.high24h * 0.95
+    },
+  },
+  {
+    id: 'near_low',
+    label: 'Near Low',
+    desc: 'Giá ≤ 105% của Low 24h — gần đáy',
+    color: '#a855f7',
+    icon: '📉',
+    needsFetch: false,
+    test: (d, prices) => {
+      const p = prices[d.symbol]
+      if (!p?.price || !p?.low24h || p.low24h === 0) return false
+      return p.price <= p.low24h * 1.05
+    },
   },
   {
     id: 'vol_spike',
@@ -104,6 +199,7 @@ const SCREENER_PRESETS = [
     desc: 'Volume > 2× trung bình 7 ngày',
     color: '#a855f7',
     icon: '⚡',
+    needsFetch: false,
     test: (d, prices) => {
       const qv = prices[d.symbol]?.quoteVolume
       const avg = d.avgVol7d
@@ -117,6 +213,7 @@ const SCREENER_PRESETS = [
     desc: 'Biến động mạnh trong 24h',
     color: '#f0b90b',
     icon: '🔥',
+    needsFetch: false,
     test: (d, prices) => {
       const ch = prices[d.symbol]?.change24h
       return ch != null && Math.abs(ch) > 5
@@ -124,9 +221,9 @@ const SCREENER_PRESETS = [
   },
 ]
 
-// ── Hook: useScreener — tính RSI + Vol cho top coins ─────────────────────────
+// ── Hook: useScreener — tính RSI + StochRSI + Vol cho top coins ──────────────
 function useScreener(allSymbols, market, prices, isActive) {
-  const [screenData, setScreenData] = useState({})   // { symbol: { rsi, avgVol7d, loading, error } }
+  const [screenData, setScreenData] = useState({})   // { symbol: { rsi, stochK, error } }
   const [scanTime, setScanTime] = useState(null)
   const [scanning, setScanning] = useState(false)
   const cancelRef = useRef(false)
@@ -139,7 +236,6 @@ function useScreener(allSymbols, market, prices, isActive) {
     cancelRef.current = false
     setScanning(true)
 
-    // Fetch song song, tối đa 10 concurrent để không bị rate limit
     const CHUNK = 10
     const results = {}
 
@@ -150,19 +246,18 @@ function useScreener(allSymbols, market, prices, isActive) {
         chunk.map(async (sym) => {
           const closes = await fetchKlineCloses(sym, market)
           const rsi = calcRSI(closes)
-          // avgVol7d = lấy từ prices (đã có) — không cần fetch thêm
-          return { symbol: sym, rsi }
+          const stochK = calcStochRSI_K(closes)
+          return { symbol: sym, rsi, stochK }
         })
       )
       settled.forEach((res, idx) => {
         const sym = chunk[idx]
         if (res.status === 'fulfilled') {
-          results[sym] = { rsi: res.value.rsi, error: false }
+          results[sym] = { rsi: res.value.rsi, stochK: res.value.stochK, error: false }
         } else {
-          results[sym] = { rsi: null, error: true }
+          results[sym] = { rsi: null, stochK: null, error: true }
         }
       })
-      // Nhỏ delay giữa các chunk tránh rate limit
       if (i + CHUNK < symbols.length) await new Promise(r => setTimeout(r, 200))
     }
 
@@ -697,20 +792,44 @@ const CoinList = forwardRef(function CoinList(props, ref) {
       {activeTab === 'screener' && (() => {
         const preset = SCREENER_PRESETS.find(p => p.id === screenerPreset)
         const scanSymbols = allSymbols.slice(0, SCREENER_COINS)
+
+        // Preset không cần fetch (near_high, near_low, vol_spike, big_move)
+        // → có thể hiển thị ngay mà không cần chờ scan
+        const needsFetch = preset?.needsFetch !== false
+
         const results = scanSymbols
           .filter(sym => {
             const d = { ...screenData[sym], symbol: sym }
             return preset && preset.test(d, prices)
           })
-          .map(sym => ({ sym, rsi: screenData[sym]?.rsi }))
+          .map(sym => ({
+            sym,
+            rsi: screenData[sym]?.rsi,
+            stochK: screenData[sym]?.stochK,
+          }))
           .sort((a, b) => {
-            // RSI oversold → sort tăng dần (thấp nhất trên đầu)
-            // RSI overbought → sort giảm dần (cao nhất trên đầu)
             if (screenerPreset === 'rsi_os') return (a.rsi ?? 99) - (b.rsi ?? 99)
             if (screenerPreset === 'rsi_ob') return (b.rsi ?? 0) - (a.rsi ?? 0)
-            // Vol spike / big move → sort theo volume
+            if (screenerPreset === 'stochrsi_os') return (a.stochK ?? 99) - (b.stochK ?? 99)
+            // near_high → sort theo % cách high (gần nhất lên đầu)
+            if (screenerPreset === 'near_high') {
+              const pa = prices[a.sym]; const pb = prices[b.sym]
+              const ra = pa?.high24h ? pa.price / pa.high24h : 0
+              const rb = pb?.high24h ? pb.price / pb.high24h : 0
+              return rb - ra
+            }
+            // near_low → sort theo % cách low (gần nhất lên đầu)
+            if (screenerPreset === 'near_low') {
+              const pa = prices[a.sym]; const pb = prices[b.sym]
+              const ra = pa?.low24h ? pa.price / pa.low24h : 999
+              const rb = pb?.low24h ? pb.price / pb.low24h : 999
+              return ra - rb
+            }
             return (prices[b.sym]?.quoteVolume ?? 0) - (prices[a.sym]?.quoteVolume ?? 0)
           })
+
+        // Preset không cần fetch: hiện kết quả ngay (không chờ screenData)
+        const isReady = !needsFetch || Object.keys(screenData).length > 0
 
         return (
           <>
@@ -721,7 +840,14 @@ const CoinList = forwardRef(function CoinList(props, ref) {
                 Screener · Top {SCREENER_COINS}
               </span>
               <div className="flex items-center gap-1.5">
-                {scanTime && !scanning && (
+                {/* Badge: preset không cần fetch → "Instant" */}
+                {!needsFetch && (
+                  <span className="text-[8px] px-1 py-0.5 rounded"
+                    style={{ background: '#0ecb8122', color: '#0ecb81' }}>
+                    Instant
+                  </span>
+                )}
+                {scanTime && !scanning && needsFetch && (
                   <span className="text-[8px]" style={{ color: '#3a4555' }}>
                     {scanTime.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
                   </span>
@@ -745,7 +871,7 @@ const CoinList = forwardRef(function CoinList(props, ref) {
               </div>
             </div>
 
-            {/* Preset selector */}
+            {/* Preset selector — 2 hàng gọn hơn */}
             <div className="flex flex-shrink-0 px-1.5 py-1.5 gap-1 flex-wrap"
               style={{ borderBottom: '0.5px solid #161b22' }}>
               {SCREENER_PRESETS.map(p => (
@@ -753,7 +879,7 @@ const CoinList = forwardRef(function CoinList(props, ref) {
                   key={p.id}
                   onClick={() => setScreenerPreset(p.id)}
                   title={p.desc}
-                  className="flex items-center gap-1 px-2 py-1 rounded text-[9px] font-semibold transition-all"
+                  className="flex items-center gap-1 px-1.5 py-1 rounded text-[9px] font-semibold transition-all"
                   style={{
                     background: screenerPreset === p.id ? `${p.color}22` : '#161b22',
                     color: screenerPreset === p.id ? p.color : '#566475',
@@ -771,20 +897,20 @@ const CoinList = forwardRef(function CoinList(props, ref) {
               <span className="text-[9px]" style={{ color: '#566475' }}>{preset?.desc}</span>
             </div>
 
-            {/* Scanning skeleton */}
-            {scanning && Object.keys(screenData).length === 0 && (
+            {/* Scanning skeleton — chỉ hiện với preset cần fetch */}
+            {needsFetch && scanning && Object.keys(screenData).length === 0 && (
               <div className="flex flex-col items-center justify-center h-32 gap-2">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="2"
                   strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}>
                   <polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
                 </svg>
                 <span className="text-[10px]" style={{ color: '#566475' }}>Đang quét {SCREENER_COINS} coin...</span>
-                <span className="text-[9px]" style={{ color: '#3a4555' }}>khoảng 10–15 giây</span>
+                <span className="text-[9px]" style={{ color: '#3a4555' }}>khoảng 15–20 giây</span>
               </div>
             )}
 
             {/* No result */}
-            {!scanning && results.length === 0 && Object.keys(screenData).length > 0 && (
+            {isReady && !scanning && results.length === 0 && (
               <div className="flex flex-col items-center justify-center h-24 gap-2 px-4 text-center">
                 <span className="text-[20px]" style={{ opacity: 0.4 }}>{preset?.icon}</span>
                 <span className="text-[10px]" style={{ color: '#566475' }}>
@@ -794,19 +920,39 @@ const CoinList = forwardRef(function CoinList(props, ref) {
             )}
 
             {/* Results list */}
-            {!scanning || Object.keys(screenData).length > 0 ? (
+            {isReady ? (
               <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: '#2a3040 transparent' }}>
-                {results.map(({ sym, rsi }, idx) => {
+                {results.map(({ sym, rsi, stochK }, idx) => {
                   const d = prices[sym] || {}
                   const isUp = (d.change24h ?? 0) >= 0
                   const isSelected = symbol === sym
                   const baseName = sym.replace('USDT', '')
                   const pinned = isPinnedFn(sym)
                   const changeColor = isUp ? '#0ecb81' : '#f6465d'
-                  const rsiColor = rsi == null ? '#3a4555'
-                    : rsi < 30 ? '#0ecb81'
-                    : rsi > 70 ? '#f6465d'
-                    : '#566475'
+
+                  // % cách high/low 24h
+                  const pctFromHigh = d.high24h ? ((d.price - d.high24h) / d.high24h) * 100 : null
+                  const pctFromLow = d.low24h ? ((d.price - d.low24h) / d.low24h) * 100 : null
+
+                  // Badge chính tuỳ preset
+                  const badge = (() => {
+                    if (screenerPreset === 'rsi_os' || screenerPreset === 'rsi_ob') {
+                      if (rsi == null) return null
+                      const c = rsi < 30 ? '#0ecb81' : rsi > 70 ? '#f6465d' : '#566475'
+                      return { label: `RSI ${rsi.toFixed(1)}`, color: c }
+                    }
+                    if (screenerPreset === 'stochrsi_os') {
+                      if (stochK == null) return null
+                      return { label: `StochK ${stochK.toFixed(1)}`, color: '#22d3ee' }
+                    }
+                    if (screenerPreset === 'near_high' && pctFromHigh != null) {
+                      return { label: `${pctFromHigh.toFixed(2)}% từ High`, color: '#f0b90b' }
+                    }
+                    if (screenerPreset === 'near_low' && pctFromLow != null) {
+                      return { label: `+${pctFromLow.toFixed(2)}% từ Low`, color: '#a855f7' }
+                    }
+                    return null
+                  })()
 
                   return (
                     <div
@@ -815,7 +961,7 @@ const CoinList = forwardRef(function CoinList(props, ref) {
                       className="flex items-center gap-1.5 px-2 py-1.5 cursor-pointer transition-all"
                       style={{
                         background: isSelected ? '#a855f714' : 'transparent',
-                        borderLeft: isSelected ? '2px solid #a855f7' : '2px solid transparent',
+                        borderLeft: isSelected ? `2px solid ${preset?.color ?? '#a855f7'}` : '2px solid transparent',
                         borderBottom: '0.5px solid #161b22',
                       }}
                       onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = '#161b2280' }}
@@ -831,11 +977,11 @@ const CoinList = forwardRef(function CoinList(props, ref) {
                       <div className="flex flex-col gap-0.5 min-w-0 flex-1">
                         <span className="text-[11px] font-semibold truncate" style={{ color: '#c9d1d9' }}>{baseName}</span>
                         <div className="flex items-center gap-1.5">
-                          {/* RSI badge */}
-                          {rsi != null && (
+                          {/* Badge chính */}
+                          {badge && (
                             <span className="text-[8px] font-bold px-1 py-0.5 rounded-sm tabular-nums"
-                              style={{ background: `${rsiColor}22`, color: rsiColor }}>
-                              RSI {rsi.toFixed(1)}
+                              style={{ background: `${badge.color}22`, color: badge.color }}>
+                              {badge.label}
                             </span>
                           )}
                           {screenData[sym]?.error && (

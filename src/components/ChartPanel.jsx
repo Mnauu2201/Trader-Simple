@@ -433,6 +433,101 @@ function updateStochRSIIncr(candle, prevClose, state, isNew) {
   return { newK, newD, newState }
 }
 
+// ── Ichimoku Cloud (v32) ──────────────────────────────────────────────────────
+// Tenkan-sen (Conversion Line): (highest_high + lowest_low) / 2 — 9 periods
+// Kijun-sen  (Base Line):       (highest_high + lowest_low) / 2 — 26 periods
+// Senkou Span A: (Tenkan + Kijun) / 2, shifted +26 periods forward
+// Senkou Span B: (highest_high + lowest_low) / 2 — 52 periods, shifted +26 forward
+// Chikou Span:   close, shifted -26 periods backward (plotted at current time)
+const ICHI_TENKAN  = 9
+const ICHI_KIJUN   = 26
+const ICHI_SENKOU_B = 52
+const ICHI_DISPLACE = 26
+
+function _ichiHL(data, from, period) {
+  let hi = -Infinity, lo = Infinity
+  for (let i = from; i > from - period && i >= 0; i--) {
+    if (data[i].high  > hi) hi = data[i].high
+    if (data[i].low   < lo) lo = data[i].low
+  }
+  return (hi + lo) / 2
+}
+
+function calcIchimokuFull(data) {
+  const tenkan = [], kijun = [], spA = [], spB = [], chikou = []
+
+  for (let i = 0; i < data.length; i++) {
+    const t = data[i].time
+
+    // Tenkan-sen
+    if (i >= ICHI_TENKAN - 1) {
+      tenkan.push({ time: t, value: _ichiHL(data, i, ICHI_TENKAN) })
+    }
+
+    // Kijun-sen
+    if (i >= ICHI_KIJUN - 1) {
+      kijun.push({ time: t, value: _ichiHL(data, i, ICHI_KIJUN) })
+    }
+
+    // Senkou Span A & B — shifted forward ICHI_DISPLACE candles
+    // We emit with time of the future candle if it exists, otherwise use estimated time
+    if (i >= ICHI_KIJUN - 1) {
+      const ten = _ichiHL(data, i, ICHI_TENKAN)
+      const kij = _ichiHL(data, i, ICHI_KIJUN)
+      const futureIdx = i + ICHI_DISPLACE
+      // Use actual future candle time if available, else estimate from last interval
+      let futureTime
+      if (futureIdx < data.length) {
+        futureTime = data[futureIdx].time
+      } else {
+        // estimate: last candle time + (futureIdx - (data.length-1)) * avg_interval
+        const avgInterval = data.length >= 2
+          ? (data[data.length - 1].time - data[0].time) / (data.length - 1)
+          : 60
+        futureTime = data[data.length - 1].time + (futureIdx - (data.length - 1)) * avgInterval
+      }
+      spA.push({ time: futureTime, value: (ten + kij) / 2 })
+    }
+
+    if (i >= ICHI_SENKOU_B - 1) {
+      const spbVal = _ichiHL(data, i, ICHI_SENKOU_B)
+      const futureIdx = i + ICHI_DISPLACE
+      let futureTime
+      if (futureIdx < data.length) {
+        futureTime = data[futureIdx].time
+      } else {
+        const avgInterval = data.length >= 2
+          ? (data[data.length - 1].time - data[0].time) / (data.length - 1)
+          : 60
+        futureTime = data[data.length - 1].time + (futureIdx - (data.length - 1)) * avgInterval
+      }
+      spB.push({ time: futureTime, value: spbVal })
+    }
+
+    // Chikou Span — close shifted back 26 periods (plot at i - ICHI_DISPLACE)
+    const chikouIdx = i - ICHI_DISPLACE
+    if (chikouIdx >= 0) {
+      chikou.push({ time: data[chikouIdx].time, value: data[i].close })
+    }
+  }
+
+  // Sort by time (Senkou spans may have duplicates from estimation — dedupe)
+  const dedupeSort = (arr) => {
+    const seen = new Set()
+    return arr
+      .sort((a, b) => a.time - b.time)
+      .filter(d => { if (seen.has(d.time)) return false; seen.add(d.time); return true })
+  }
+
+  return {
+    tenkan: dedupeSort(tenkan),
+    kijun:  dedupeSort(kijun),
+    spA:    dedupeSort(spA),
+    spB:    dedupeSort(spB),
+    chikou: dedupeSort(chikou),
+  }
+}
+
 function throttle(fn, ms) {
   let last = 0, timer = null
   return function (...args) {
@@ -678,6 +773,13 @@ export default function ChartPanel() {
   const stochDRef = useRef(null)     // %D line (cam, signal)
   const stochStateRef = useRef(null) // O(1) per-tick state
 
+  // ── Ichimoku refs (v32) ───────────────────────────────────────────────────
+  const ichimokuTenkanRef = useRef(null)  // Tenkan-sen (đỏ nhạt)
+  const ichimokuKijunRef  = useRef(null)  // Kijun-sen (xanh nhạt)
+  const ichimokuSpARef    = useRef(null)  // Senkou Span A (xanh lá nhạt)
+  const ichimokuSpBRef    = useRef(null)  // Senkou Span B (đỏ nhạt)
+  const ichimokuChikouRef = useRef(null)  // Chikou Span (tím nhạt)
+
   const klineDataRef = useRef([])
   const [klineDataState, setKlineDataState] = useState([])
   const rsiStateRef = useRef(null)
@@ -725,6 +827,7 @@ export default function ChartPanel() {
     showDualChart, setShowDualChart,
     showVWAP, setShowVWAP,
     showStochRSI, setShowStochRSI,
+    showIchimoku, setShowIchimoku,
   } = useChartStore()
 
   // ── OI History data ───────────────────────────────────────────────────────
@@ -866,6 +969,43 @@ export default function ChartPanel() {
       visible: false,
     })
 
+    // ── Ichimoku Cloud series (v32) ──────────────────────────────────────────
+    // Senkou Span A (bullish boundary — xanh)
+    const ichiSpA = mainChart.addSeries(LineSeries, {
+      color: '#0ecb8188', lineWidth: 1, lineStyle: 0,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      visible: false,
+    })
+    // Senkou Span B (bearish boundary — đỏ)
+    const ichiSpB = mainChart.addSeries(LineSeries, {
+      color: '#f6465d88', lineWidth: 1, lineStyle: 0,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      visible: false,
+    })
+    // Tenkan-sen (xanh dương)
+    const ichiTenkan = mainChart.addSeries(LineSeries, {
+      color: '#2196f3', lineWidth: 1, lineStyle: 0,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      visible: false,
+    })
+    // Kijun-sen (đỏ cam)
+    const ichiKijun = mainChart.addSeries(LineSeries, {
+      color: '#ff6b35', lineWidth: 1, lineStyle: 0,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      visible: false,
+    })
+    // Chikou Span (tím)
+    const ichiChikou = mainChart.addSeries(LineSeries, {
+      color: '#a855f7', lineWidth: 1, lineStyle: 0,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      visible: false,
+    })
+    ichimokuTenkanRef.current = ichiTenkan
+    ichimokuKijunRef.current  = ichiKijun
+    ichimokuSpARef.current    = ichiSpA
+    ichimokuSpBRef.current    = ichiSpB
+    ichimokuChikouRef.current = ichiChikou
+
     const rsiChart = createChart(rsiContainerRef.current, {
       autoSize: true,
       layout: { ...baseLayout, fontSize: 10 },
@@ -951,7 +1091,14 @@ export default function ChartPanel() {
       const bbM = param.seriesData?.get(bbMiddle)
       const bbL = param.seriesData?.get(bbLower)
       const bbValues = (bbU && bbM && bbL) ? { upper: bbU.value, middle: bbM.value, lower: bbL.value } : null
-      setTooltip({ open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: vol?.value ?? 0, isUp: bar.close >= bar.open, maValues, emaValues, bbValues })
+      // Ichimoku values for tooltip
+      const ichiValues = (ichimokuTenkanRef.current && ichimokuKijunRef.current) ? {
+        tenkan: param.seriesData?.get(ichimokuTenkanRef.current)?.value ?? null,
+        kijun:  param.seriesData?.get(ichimokuKijunRef.current)?.value ?? null,
+        spA:    param.seriesData?.get(ichimokuSpARef.current)?.value ?? null,
+        spB:    param.seriesData?.get(ichimokuSpBRef.current)?.value ?? null,
+      } : null
+      setTooltip({ open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: vol?.value ?? 0, isUp: bar.close >= bar.open, maValues, emaValues, bbValues, ichiValues })
     }, 16)
 
     const onMacd = throttle((param) => {
@@ -1435,6 +1582,25 @@ export default function ChartPanel() {
     }
   }, [showCVD])
 
+  // ── Toggle Ichimoku (v32) ─────────────────────────────────────────────────
+  useEffect(() => {
+    const vis = showIchimoku
+    ichimokuTenkanRef.current?.applyOptions({ visible: vis })
+    ichimokuKijunRef.current?.applyOptions({ visible: vis })
+    ichimokuSpARef.current?.applyOptions({ visible: vis })
+    ichimokuSpBRef.current?.applyOptions({ visible: vis })
+    ichimokuChikouRef.current?.applyOptions({ visible: vis })
+    // Tính dữ liệu lần đầu khi bật
+    if (vis && klineDataRef.current.length >= ICHI_SENKOU_B) {
+      const ichi = calcIchimokuFull(klineDataRef.current)
+      ichimokuTenkanRef.current?.setData(ichi.tenkan)
+      ichimokuKijunRef.current?.setData(ichi.kijun)
+      ichimokuSpARef.current?.setData(ichi.spA)
+      ichimokuSpBRef.current?.setData(ichi.spB)
+      ichimokuChikouRef.current?.setData(ichi.chikou)
+    }
+  }, [showIchimoku])
+
   // ── Toggle MA ──────────────────────────────────────────────────────────────
   useEffect(() => {
     MA_CONFIGS.forEach(cfg => maRefs.current[cfg.period]?.applyOptions({ visible: showMA[cfg.period] }))
@@ -1622,6 +1788,16 @@ export default function ChartPanel() {
         stochStateRef.current = state
       }
     }
+
+    // Ichimoku Cloud — full calc (v32)
+    if (showIchimoku && data.length >= ICHI_SENKOU_B) {
+      const ichi = calcIchimokuFull(data)
+      ichimokuTenkanRef.current?.setData(ichi.tenkan)
+      ichimokuKijunRef.current?.setData(ichi.kijun)
+      ichimokuSpARef.current?.setData(ichi.spA)
+      ichimokuSpBRef.current?.setData(ichi.spB)
+      ichimokuChikouRef.current?.setData(ichi.chikou)
+    }
   }, [])
 
   // ── onUpdate: O(1) per tick ───────────────────────────────────────────────
@@ -1743,6 +1919,46 @@ export default function ChartPanel() {
       }
     }
 
+    // Ichimoku Cloud — recalc cuối khi tick mới (O(periods)) — v32
+    // Chỉ tính nến cuối + projected Senkou spans
+    if (showIchimoku) {
+      const data = klineDataRef.current
+      if (data.length >= ICHI_SENKOU_B) {
+        const n = data.length - 1
+        // Tenkan-sen
+        if (n >= ICHI_TENKAN - 1) {
+          ichimokuTenkanRef.current?.update({ time: candle.time, value: _ichiHL(data, n, ICHI_TENKAN) })
+        }
+        // Kijun-sen
+        if (n >= ICHI_KIJUN - 1) {
+          ichimokuKijunRef.current?.update({ time: candle.time, value: _ichiHL(data, n, ICHI_KIJUN) })
+        }
+        // Chikou Span — close at (n - ICHI_DISPLACE)
+        const chikouIdx = n - ICHI_DISPLACE
+        if (chikouIdx >= 0) {
+          ichimokuChikouRef.current?.update({ time: data[chikouIdx].time, value: candle.close })
+        }
+        // Senkou A & B — update the projected future point
+        if (n >= ICHI_KIJUN - 1) {
+          const ten = _ichiHL(data, n, ICHI_TENKAN)
+          const kij = _ichiHL(data, n, ICHI_KIJUN)
+          const avgInterval = data.length >= 2
+            ? (data[data.length - 1].time - data[0].time) / (data.length - 1)
+            : 60
+          const futureTime = candle.time + ICHI_DISPLACE * avgInterval
+          ichimokuSpARef.current?.update({ time: futureTime, value: (ten + kij) / 2 })
+        }
+        if (n >= ICHI_SENKOU_B - 1) {
+          const spbVal = _ichiHL(data, n, ICHI_SENKOU_B)
+          const avgInterval = data.length >= 2
+            ? (data[data.length - 1].time - data[0].time) / (data.length - 1)
+            : 60
+          const futureTime = candle.time + ICHI_DISPLACE * avgInterval
+          ichimokuSpBRef.current?.update({ time: futureTime, value: spbVal })
+        }
+      }
+    }
+
     // Auto scroll to latest khi nến MỚI xuất hiện (không phải cập nhật nến hiện tại)
     if (isNew && mainChartRef.current) {
       try {
@@ -1829,6 +2045,16 @@ export default function ChartPanel() {
         stochDRef.current.setData(dLine)
         stochStateRef.current = state
       }
+    }
+
+    // Ichimoku recalc sau khi prepend (v32)
+    if (showIchimoku && merged.length >= ICHI_SENKOU_B) {
+      const ichi = calcIchimokuFull(merged)
+      ichimokuTenkanRef.current?.setData(ichi.tenkan)
+      ichimokuKijunRef.current?.setData(ichi.kijun)
+      ichimokuSpARef.current?.setData(ichi.spA)
+      ichimokuSpBRef.current?.setData(ichi.spB)
+      ichimokuChikouRef.current?.setData(ichi.chikou)
     }
   }, [])
 
@@ -2250,6 +2476,16 @@ export default function ChartPanel() {
               StochRSI
             </button>
 
+            {/* ── v32: Ichimoku Cloud toggle ── */}
+            <button onClick={() => setShowIchimoku(!showIchimoku)}
+              className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showIchimoku
+                ? 'bg-[#ff6b351a] text-[#ff9800] border-[#ff980044] font-medium'
+                : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
+                }`}
+              title="Ichimoku Cloud — Tenkan(9) / Kijun(26) / Senkou A&B / Chikou Span">
+              Ichimoku
+            </button>
+
             <button onClick={() => setShowVolume(!showVolume)}
               className={`px-2 py-0.5 text-[10px] rounded border transition-all ${showVolume ? 'bg-[#4c525e1a] text-[#848e9c] border-[#4c525e44]' : 'border-[#2b3139] text-[#5e6673] hover:text-[#848e9c]'
                 }`}>
@@ -2411,6 +2647,14 @@ export default function ChartPanel() {
                   <span className="text-[#26a69a]">BB↑ <span className="text-[#eaecef]">{fmtPrice(tooltip.bbValues.upper)}</span></span>
                   <span className="text-[#26a69a66]">BB— <span className="text-[#eaecef]">{fmtPrice(tooltip.bbValues.middle)}</span></span>
                   <span className="text-[#26a69a]">BB↓ <span className="text-[#eaecef]">{fmtPrice(tooltip.bbValues.lower)}</span></span>
+                </>
+              )}
+              {showIchimoku && tooltip.ichiValues && (
+                <>
+                  {tooltip.ichiValues.tenkan != null && <span className="text-[#2196f3]">T <span className="text-[#eaecef]">{fmtPrice(tooltip.ichiValues.tenkan)}</span></span>}
+                  {tooltip.ichiValues.kijun  != null && <span className="text-[#ff6b35]">K <span className="text-[#eaecef]">{fmtPrice(tooltip.ichiValues.kijun)}</span></span>}
+                  {tooltip.ichiValues.spA    != null && <span className="text-[#0ecb8188]">SpA <span className="text-[#eaecef]">{fmtPrice(tooltip.ichiValues.spA)}</span></span>}
+                  {tooltip.ichiValues.spB    != null && <span className="text-[#f6465d88]">SpB <span className="text-[#eaecef]">{fmtPrice(tooltip.ichiValues.spB)}</span></span>}
                 </>
               )}
             </div>

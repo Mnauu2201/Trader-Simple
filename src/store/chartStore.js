@@ -32,6 +32,9 @@ export const useChartStore = create(
       // ── v29: Stochastic RSI ──────────────────────────────────────────────
       showStochRSI: false,    // StochRSI(14,14,3,3) panel bên dưới chart
 
+      // ── v32: Ichimoku Cloud ───────────────────────────────────────────────
+      showIchimoku: false,    // Ichimoku Cloud overlay trên main chart
+
       // Alert sound settings
       alertVolume: 0.4,
       alertTone: 'sine',
@@ -54,6 +57,7 @@ export const useChartStore = create(
       setInterval2: (v) => set({ interval2: v }),
       setShowVWAP: (v) => set({ showVWAP: v }),
       setShowStochRSI: (v) => set({ showStochRSI: v }),   // ← v29
+      setShowIchimoku: (v) => set({ showIchimoku: v }),   // ← v32
       setAlertVolume: (v) => set({ alertVolume: v }),
       setAlertTone: (v) => set({ alertTone: v }),
     }),
@@ -78,6 +82,7 @@ export const useChartStore = create(
         interval2: state.interval2,
         showVWAP: state.showVWAP,
         showStochRSI: state.showStochRSI,   // ← v29
+        showIchimoku: state.showIchimoku,   // ← v32
         alertVolume: state.alertVolume,
         alertTone: state.alertTone,
       }),
