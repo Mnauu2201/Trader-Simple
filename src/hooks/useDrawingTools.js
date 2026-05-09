@@ -1287,6 +1287,13 @@ export function useDrawingTools({
     const drawingsRef = useRef(drawings)
     useEffect(() => { drawingsRef.current = drawings }, [drawings])
 
+    // ── v33: Select / Move / Delete per drawing ──────────────────────────────
+    const [selectedId, setSelectedId] = useState(null)
+    const selectedIdRef = useRef(null)
+    const dragRef = useRef(null)  // {drawingId, mode:'move'|'point', ptIdx, startX, startY, origPoints}
+    const ctxMenuRef = useRef(null)
+    const [ctxMenu, setCtxMenu] = useState(null)  // {x, y, drawingId}
+
     const activeToolRef = useRef(activeTool)
     const drawingColorRef = useRef(drawingColor)
     const lineWidthRef = useRef(lineWidth)
@@ -1309,6 +1316,113 @@ export function useDrawingTools({
     const isCursorMode = useCallback((tool) =>
         !tool || tool === 'cursor' || tool === 'cross' || tool === 'dot_cursor' || tool === 'demo_cursor'
         , [])
+
+    // ── v33: Hit-test a completed drawing at canvas (px, py) ─────────────────
+    function hitTestDrawing(d, px, py) {
+        if (d.hidden || d.locked) return false
+        const canvas = canvasRef.current
+        if (!canvas) return false
+        const W = canvas.width, H = canvas.height
+        const pts = d.points || []
+        if (!pts.length) return false
+        const THRESH = 8
+
+        if (d.type === 'hline') return Math.abs(py - pts[0].y) < THRESH
+        if (d.type === 'vline' || d.type === 'crossline') return Math.abs(px - pts[0].x) < THRESH
+        if (d.type === 'hray') {
+            const goRight = pts[1] ? pts[1].x >= pts[0].x : true
+            return Math.abs(py - pts[0].y) < THRESH && (goRight ? px >= pts[0].x - THRESH : px <= pts[0].x + THRESH)
+        }
+        if (d.type === 'rect') {
+            if (pts.length < 2) return false
+            const rx = Math.min(pts[0].x, pts[1].x), ry = Math.min(pts[0].y, pts[1].y)
+            const rw = Math.abs(pts[1].x - pts[0].x), rh = Math.abs(pts[1].y - pts[0].y)
+            return px >= rx - THRESH && px <= rx + rw + THRESH && py >= ry - THRESH && py <= ry + rh + THRESH
+        }
+        if (d.type === 'fib_ret') {
+            if (pts.length < 2) return false
+            const xMin = Math.min(pts[0].x, pts[1].x), xMax = Math.max(pts[0].x, pts[1].x)
+            if (px < xMin - THRESH || px > xMax + THRESH) return false
+            const yRange = pts[1].y - pts[0].y
+            for (const level of FIB_LEVELS) {
+                const y = pts[0].y + yRange * level
+                if (Math.abs(py - y) < THRESH) return true
+            }
+            return false
+        }
+        if (d.type === 'ray') {
+            if (pts.length < 2) return false
+            const [a, b] = [pts[0], pts[1]]
+            const dx = b.x - a.x, dy = b.y - a.y
+            const len = Math.sqrt(dx * dx + dy * dy) || 1
+            const t = (Math.max(W, H) * 4) / len
+            const ex = a.x + dx * t, ey = a.y + dy * t
+            return distToSegmentSq(px, py, a.x, a.y, ex, ey) < THRESH * THRESH && px >= a.x - THRESH
+        }
+        if (d.type === 'extended') {
+            if (pts.length < 2) return false
+            const [a, b] = [pts[0], pts[1]]
+            const dx = b.x - a.x, dy = b.y - a.y
+            const len = Math.sqrt(dx * dx + dy * dy) || 1
+            const t = (Math.max(W, H) * 4) / len
+            return distToSegmentSq(px, py, a.x - dx * t, a.y - dy * t, a.x + dx * t, a.y + dy * t) < THRESH * THRESH
+        }
+        // Default: hit test each segment
+        for (let i = 1; i < pts.length; i++) {
+            if (distToSegmentSq(px, py, pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y) < THRESH * THRESH) return true
+        }
+        // Single point fallback
+        if (pts.length === 1) return Math.hypot(px - pts[0].x, py - pts[0].y) < THRESH * 2
+        return false
+    }
+
+    function distToSegmentSq(px, py, x1, y1, x2, y2) {
+        const dx = x2 - x1, dy = y2 - y1
+        const lenSq = dx * dx + dy * dy
+        if (lenSq === 0) return (px - x1) ** 2 + (py - y1) ** 2
+        let t = ((px - x1) * dx + (py - y1) * dy) / lenSq
+        t = Math.max(0, Math.min(1, t))
+        return (px - (x1 + t * dx)) ** 2 + (py - (y1 + t * dy)) ** 2
+    }
+
+    // Which point handle is hit (returns index or -1)
+    function hitTestHandle(d, px, py) {
+        const THRESH = 10
+        const pts = d.points || []
+        for (let i = 0; i < pts.length; i++) {
+            if (Math.hypot(px - pts[i].x, py - pts[i].y) < THRESH) return i
+        }
+        return -1
+    }
+
+    // Draw selection highlight: dotted outline + handle dots on selected drawing
+    function drawSelectionOverlay(ctx, d) {
+        const pts = d.points || []
+        if (!pts.length) return
+        const clr = d.color || '#2962ff'
+        ctx.save()
+        ctx.strokeStyle = clr
+        ctx.lineWidth = 1
+        ctx.setLineDash([3, 3])
+        ctx.globalAlpha = 0.6
+        // Redraw the shape with dashed selection highlight
+        const W = ctx.canvas.width, H = ctx.canvas.height
+        if (d.type === 'rect' && pts.length >= 2) {
+            const rx = Math.min(pts[0].x, pts[1].x), ry = Math.min(pts[0].y, pts[1].y)
+            const rw = Math.abs(pts[1].x - pts[0].x), rh = Math.abs(pts[1].y - pts[0].y)
+            ctx.strokeRect(rx - 3, ry - 3, rw + 6, rh + 6)
+        }
+        ctx.restore()
+        // Draw handle dots on all anchor points
+        pts.forEach(p => {
+            ctx.save()
+            ctx.setLineDash([])
+            ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, Math.PI * 2)
+            ctx.fillStyle = '#1e2329'; ctx.fill()
+            ctx.strokeStyle = clr; ctx.lineWidth = 2; ctx.stroke()
+            ctx.restore()
+        })
+    }
 
     function snapToOHLC(x, y) {
         const data = ohlcRef.current
@@ -1425,7 +1539,13 @@ export function useDrawingTools({
         const ctx = canvas.getContext('2d')
         ctx.clearRect(0, 0, canvas.width, canvas.height)
         if (hiddenAll) return
-        drawingsRef.current.forEach(d => { if (!d.hidden) drawShape(ctx, d, false) })
+        drawingsRef.current.forEach(d => {
+            if (!d.hidden) {
+                drawShape(ctx, d, false)
+                // v33: selection overlay
+                if (d.id === selectedIdRef.current) drawSelectionOverlay(ctx, d)
+            }
+        })
         if (inProgressRef.current) {
             drawShape(ctx, inProgressRef.current, true)
         }
@@ -1527,11 +1647,18 @@ export function useDrawingTools({
     // ── Mouse Down ────────────────────────────────────────────────────────────────
     const handleMouseDown = useCallback((e) => {
         const tool = activeToolRef.current
-        // Cursor modes: canvas has pointerEvents none, so this won't fire anyway
-        // But keep guard for safety
         if (isCursorMode(tool) || lockedAll) return
         const xy = getCanvasXY(e)
         if (!xy) return
+
+        // ── v33: In drawing mode, also handle right-click for context menu ──
+        if (e.button === 2) return  // handled by onContextMenu
+
+        // ── v33: cursor mode — select / move existing drawings ───────────────
+        // NOTE: canvas has pointerEvents:none in cursor mode so this block
+        // only fires when a drawing-tool is active. We still need to support
+        // re-selecting a drawing while e.g. 'trendline' tool is active but
+        // the user clicks on an existing drawing → handled via cursor mode check below
         const point = makePoint(xy.x, xy.y)
         const color = drawingColorRef.current
         const lw2 = lineWidthRef.current
@@ -1616,6 +1743,32 @@ export function useDrawingTools({
 
         if (isCursorMode(tool)) return
 
+        // ── v33: dragging a selected drawing ────────────────────────────────
+        if (dragRef.current) {
+            const ds = dragRef.current
+            const drawing = drawingsRef.current.find(d => d.id === ds.drawingId)
+            if (drawing && !drawing.locked) {
+                const dx = xy.x - ds.startX
+                const dy = xy.y - ds.startY
+                if (ds.mode === 'move') {
+                    drawing.points = ds.origPoints.map(p => ({
+                        ...p,
+                        x: p.x + dx,
+                        y: p.y + dy,
+                        price: pixelToPrice ? pixelToPrice(p.y + dy) : p.price,
+                    }))
+                } else if (ds.mode === 'point') {
+                    const newPts = ds.origPoints.map((p, i) => i === ds.ptIdx
+                        ? { ...p, x: p.x + dx, y: p.y + dy, price: pixelToPrice ? pixelToPrice(p.y + dy) : p.price }
+                        : p)
+                    drawing.points = newPts
+                }
+                // Update drawingsRef directly (no setState for perf)
+                scheduleRedraw()
+            }
+            return
+        }
+
         if (FREEHAND_TOOLS.has(tool) && isDrawingRef.current && inProgressRef.current) {
             inProgressRef.current = { ...inProgressRef.current, path: [...(inProgressRef.current.path || []), { x: xy.x, y: xy.y }] }
             scheduleRedraw()
@@ -1641,6 +1794,16 @@ export function useDrawingTools({
 
     // ── Mouse Up ──────────────────────────────────────────────────────────────────
     const handleMouseUp = useCallback((e) => {
+        // v33: finalize drag-move
+        if (dragRef.current) {
+            const ds = dragRef.current
+            // Commit moved positions to state so drawings persist
+            setDrawings(prev => prev.map(d => d.id === ds.drawingId
+                ? { ...d, points: d.points }  // already mutated via drawingsRef
+                : d))
+            dragRef.current = null
+            return
+        }
         if (FREEHAND_TOOLS.has(activeToolRef.current) && inProgressRef.current) {
             const { _fixedPoints, ...cleanDrawing } = inProgressRef.current
             setDrawings(prev => [...prev, { ...cleanDrawing, id: Date.now() }])
@@ -1649,13 +1812,29 @@ export function useDrawingTools({
         isDrawingRef.current = false
     }, [])
 
-    // ── Right-click cancels ────────────────────────────────────────────────────
+    // ── Right-click: cancel in-progress OR show context menu on drawing ───────
     const handleContextMenu = useCallback((e) => {
         if (inProgressRef.current) {
             e.preventDefault()
             inProgressRef.current = null
             scheduleRedraw()
+            return
         }
+        // v33: try to hit-test a drawing for context menu
+        const xy = getCanvasXY(e)
+        if (xy) {
+            const hit = [...drawingsRef.current].reverse().find(d => hitTestDrawing(d, xy.x, xy.y))
+            if (hit) {
+                e.preventDefault()
+                selectedIdRef.current = hit.id
+                setSelectedId(hit.id)
+                setCtxMenu({ x: e.clientX, y: e.clientY, drawingId: hit.id })
+                scheduleRedraw()
+                return
+            }
+        }
+        // No drawing hit → let browser default (or close any open menu)
+        setCtxMenu(null)
     }, [scheduleRedraw])
 
     // ── Double-click finalizes multi-point / ends polyline ────────────────────
@@ -1680,11 +1859,21 @@ export function useDrawingTools({
             }
             if (e.key === 'Escape') {
                 if (inProgressRef.current) { inProgressRef.current = null; scheduleRedraw() }
-                else { onToolChange?.('cursor') }
+                else if (selectedIdRef.current) {
+                    // Deselect
+                    selectedIdRef.current = null; setSelectedId(null); setCtxMenu(null); scheduleRedraw()
+                } else { onToolChange?.('cursor') }
                 return
             }
             if ((e.key === 'Delete' || e.key === 'Backspace') && !inProgressRef.current) {
-                setDrawings(prev => prev.slice(0, -1))
+                // v33: delete selected drawing if exists, otherwise delete last
+                if (selectedIdRef.current) {
+                    const delId = selectedIdRef.current
+                    setDrawings(prev => prev.filter(d => d.id !== delId))
+                    selectedIdRef.current = null; setSelectedId(null)
+                } else {
+                    setDrawings(prev => prev.slice(0, -1))
+                }
             }
         }
         window.addEventListener('keydown', handleKey)
@@ -1696,8 +1885,8 @@ export function useDrawingTools({
         switch (action) {
             case 'toggleLockAll': setLockedAll(v => !v); break
             case 'toggleHideAll': setHiddenAll(v => !v); break
-            case 'deleteAll': setDrawings([]); inProgressRef.current = null; scheduleRedraw(); break
-            case 'deleteDrawings': setDrawings([]); inProgressRef.current = null; scheduleRedraw(); break
+            case 'deleteAll': setDrawings([]); inProgressRef.current = null; selectedIdRef.current = null; setSelectedId(null); scheduleRedraw(); break
+            case 'deleteDrawings': setDrawings([]); inProgressRef.current = null; selectedIdRef.current = null; setSelectedId(null); scheduleRedraw(); break
             case 'undo': setDrawings(prev => prev.slice(0, -1)); break
             case 'hideOptions': setHiddenAll(v => !v); break
             case 'hideIndicators': break  // handled by parent
@@ -1705,6 +1894,50 @@ export function useDrawingTools({
             default: break
         }
     }
+
+    // ── v33: Context menu per-drawing actions ─────────────────────────────────
+    function ctxDelete() {
+        if (!ctxMenu) return
+        const delId = ctxMenu.drawingId
+        setDrawings(prev => prev.filter(d => d.id !== delId))
+        if (selectedIdRef.current === delId) { selectedIdRef.current = null; setSelectedId(null) }
+        setCtxMenu(null)
+        scheduleRedraw()
+    }
+
+    function ctxDuplicate() {
+        if (!ctxMenu) return
+        const orig = drawingsRef.current.find(d => d.id === ctxMenu.drawingId)
+        if (!orig) return
+        const dup = {
+            ...orig,
+            id: Date.now(),
+            points: orig.points.map(p => ({ ...p, x: p.x + 8, y: p.y + 8 })),
+        }
+        setDrawings(prev => [...prev, dup])
+        selectedIdRef.current = dup.id; setSelectedId(dup.id)
+        setCtxMenu(null)
+        scheduleRedraw()
+    }
+
+    function ctxLock() {
+        if (!ctxMenu) return
+        const tid = ctxMenu.drawingId
+        setDrawings(prev => prev.map(d => d.id === tid ? { ...d, locked: !d.locked } : d))
+        setCtxMenu(null)
+    }
+
+    function ctxHide() {
+        if (!ctxMenu) return
+        const tid = ctxMenu.drawingId
+        setDrawings(prev => prev.map(d => d.id === tid ? { ...d, hidden: !d.hidden } : d))
+        setCtxMenu(null)
+        scheduleRedraw()
+    }
+
+    // ── Mouse click: select drawing (canvas has pointerEvents:all in drawing modes) ──
+    // We need to also handle click-to-select on an existing drawing BEFORE starting
+    // a new in-progress. Integrated into handleMouseDown above.
 
     const cursorStyle = activeTool === 'cross'
         ? 'crosshair'  // native OS crosshair cursor (+)
@@ -1732,6 +1965,14 @@ export function useDrawingTools({
         // when canvas has pointerEvents:none (cursor modes)
         handleCursorMove: handleMouseMove,
         handleCursorLeave: handleMouseLeave,
+        // v33: per-drawing select/delete
+        selectedId,
+        ctxMenu,
+        setCtxMenu,
+        ctxDelete,
+        ctxDuplicate,
+        ctxLock,
+        ctxHide,
         canvasProps: {
             onMouseDown: handleMouseDown,
             onMouseMove: handleMouseMove,

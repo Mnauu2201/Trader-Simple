@@ -826,6 +826,11 @@ export default function DrawingToolbar({
                             danger
                         />
                         <div style={{ height: 1, background: '#2b3139', margin: '4px 0' }} />
+                        <div style={{ padding: '4px 12px 6px', fontSize: 10, color: '#4c535e' }}>
+                            Tip: Click drawing → right-click to delete individually.<br />
+                            Or select + press <kbd style={{ background: '#131722', padding: '1px 4px', borderRadius: 3, fontFamily: 'monospace' }}>Del</kbd>
+                        </div>
+                        <div style={{ height: 1, background: '#2b3139', margin: '4px 0' }} />
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', color: '#868ea7', fontSize: 12 }}>
                             <span style={{ flex: 1 }}>Always remove locked drawings</span>
                             <Toggle value={alwaysRemoveLocked} onChange={v => { setAlwaysRemoveLocked(v); onAction?.('setAlwaysRemoveLocked', v) }} />

@@ -846,6 +846,12 @@ export default function ChartPanel() {
     canvasProps,
     handleCursorMove,
     handleCursorLeave,
+    ctxMenu,
+    setCtxMenu,
+    ctxDelete,
+    ctxDuplicate,
+    ctxLock,
+    ctxHide,
   } = useDrawingTools({
     canvasRef: canvasOverlayRef,
     activeTool,
@@ -2688,6 +2694,37 @@ export default function ChartPanel() {
             ref={canvasOverlayRef}
             {...canvasProps}
           />
+
+          {/* ── v33: Per-drawing context menu ── */}
+          {ctxMenu && (
+            <div
+              className="fixed z-[200] rounded-lg overflow-hidden shadow-2xl select-none"
+              style={{ left: ctxMenu.x, top: ctxMenu.y, background: '#1e222d', border: '1px solid #2b3139', minWidth: 170 }}
+              onMouseLeave={() => setCtxMenu(null)}
+            >
+              {[
+                { label: 'Duplicate', icon: '⧉', fn: ctxDuplicate },
+                { label: 'Lock / Unlock', icon: '🔒', fn: ctxLock },
+                { label: 'Hide', icon: '👁', fn: ctxHide },
+                null,
+                { label: 'Delete', icon: '🗑', fn: ctxDelete, danger: true },
+              ].map((item, i) =>
+                item === null
+                  ? <div key={i} style={{ height: 1, background: '#2b3139', margin: '2px 0' }} />
+                  : (
+                    <button key={item.label} onClick={item.fn}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-[12px] transition-colors"
+                      style={{ background: 'transparent', color: item.danger ? '#f6465d' : '#c9d2e3', border: 'none', cursor: 'pointer', textAlign: 'left' }}
+                      onMouseEnter={e => { e.currentTarget.style.background = item.danger ? '#f6465d18' : '#2b3139' }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                    >
+                      <span style={{ width: 16, textAlign: 'center', fontSize: 11 }}>{item.icon}</span>
+                      {item.label}
+                    </button>
+                  )
+              )}
+            </div>
+          )}
 
           {/* Main lightweight-chart */}
           <div
